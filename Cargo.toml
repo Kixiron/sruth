@@ -1,0 +1,24 @@
+[package]
+name = "sruth"
+version = "0.1.0"
+authors = ["Chase Wilson <me@chasewilson.dev>"]
+license = "MIT OR Apache-2.0"
+edition = "2018"
+
+[dependencies]
+lasso = "0.4.1"
+abomonation = "0.7.3"
+abomonation_derive = "0.5.0"
+
+[dependencies.timely]
+git = "https://github.com/TimelyDataflow/timely-dataflow"
+default-features = false
+
+[dependencies.differential-dataflow]
+git = "https://github.com/TimelyDataflow/differential-dataflow"
+rev = "2b12f29d951b60c6c1ef3db77fbba1568db5a2c3"
+default-features = false
+
+[profile.dev]
+opt-level = 0
+incremental = true
