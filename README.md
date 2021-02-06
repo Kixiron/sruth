@@ -1,3 +1,3 @@
 # Sruth Lùbach: A Meandering Current 
 
-`sruth` is an toy optimizing compiler
+`sruth` is an toy optimization engine

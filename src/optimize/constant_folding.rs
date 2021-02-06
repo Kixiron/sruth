@@ -1,9 +1,10 @@
 use crate::{
-    dataflow::{FilterMap, InputManager, Time},
+    dataflow::{operators::FilterMap, InputManager, Time},
     repr::{
         basic_block::BasicBlockMeta,
-        instruction::{Add, Assign, BinOp, Div, Mul, Sub},
-        BasicBlockId, Cast, Constant, InstId, Instruction, Terminator, Value, VarId,
+        instruction::{Add, Assign, BinopExt, Div, Mul, Sub},
+        BasicBlockId, Cast, Constant, InstId, Instruction, RawCast, Terminator, Type, Value,
+        ValueKind, VarId,
     },
 };
 use differential_dataflow::{
@@ -25,7 +26,7 @@ use timely::{
 
 type ConstProp<S, R> = (
     Collection<S, (InstId, Instruction), R>,
-    Collection<S, (VarId, Constant), R>,
+    Collection<S, (VarId, (Constant, Type)), R>,
     Collection<S, (BasicBlockId, Terminator), R>,
 );
 
@@ -43,14 +44,12 @@ where
         .import(scope)
         .as_collection(|&id, inst| (id, inst.clone()));
 
-    let seed_constants = instructions
-        .inspect(|x| println!("Before: {:?}", x))
-        .filter_map(|(_, inst)| {
-            inst.into_assign().and_then(|Assign { value, dest }| {
-                value.into_const().map(|constant| (dest, constant))
-            })
+    let seed_constants = instructions.filter_map(|(_, inst)| {
+        inst.cast().and_then(|Assign { value, dest }| {
+            let (value, ty) = value.split();
+            value.into_const().map(|constant| (dest, (constant, ty)))
         })
-        .inspect(|x| println!("After: {:?}", x));
+    });
 
     let (propagated_instructions, constants) =
         scope.scoped::<Product<_, Time>, _, _>("iterative constant propagation", |nested| {
@@ -72,8 +71,10 @@ where
             // Add the newly derived constants to the stream of constants
             let new_constants = evaluated_binops
                 .map(|(_, assign)| {
-                    let assign = assign.into_assign().unwrap();
-                    (assign.dest, assign.value.into_const().unwrap())
+                    let assign: Assign = assign.cast().unwrap();
+                    let (value, ty) = assign.value.split();
+
+                    (assign.dest, (value.into_const().unwrap(), ty))
                 })
                 .concat(&constants)
                 .consolidate();
@@ -98,7 +99,7 @@ where
 
 fn propagate_to_terminators<S, R, A>(
     blocks: &Arranged<S, A>,
-    constants: &Collection<S, (VarId, Constant), R>,
+    constants: &Collection<S, (VarId, (Constant, Type)), R>,
 ) -> Collection<S, (BasicBlockId, Terminator), R>
 where
     S: Scope,
@@ -111,18 +112,26 @@ where
         .filter_map(|(id, term)| {
             term.into_return()
                 .flatten()
-                .and_then(|term| term.as_var())
-                .map(|var| (var, id))
+                .and_then(|term| term.as_var().map(|var| (var, term.ty)))
+                .map(|(var, ty)| (var, (id, ty)))
         });
 
-    returns.join_map(constants, |_, &id, constant| {
-        (id, Terminator::Return(Some(Value::Const(constant.clone()))))
+    returns.join_map(constants, |_, &(id, ref ret_ty), (constant, const_ty)| {
+        assert_eq!(ret_ty, const_ty);
+
+        (
+            id,
+            Terminator::Return(Some(Value::new(
+                ValueKind::Const(constant.clone()),
+                const_ty.clone(),
+            ))),
+        )
     })
 }
 
 fn promote_constants<S, R>(
     instructions: &Collection<S, (InstId, Instruction), R>,
-    constants: &Collection<S, (VarId, Constant), R>,
+    constants: &Collection<S, (VarId, (Constant, Type)), R>,
 ) -> Collection<S, (InstId, Instruction), R>
 where
     S: Scope,
@@ -141,17 +150,17 @@ where
 
 fn promote_binop<S, T, R>(
     instructions: &Collection<S, (InstId, Instruction), R>,
-    constants: &Collection<S, (VarId, Constant), R>,
+    constants: &Collection<S, (VarId, (Constant, Type)), R>,
 ) -> Collection<S, (InstId, Instruction), R>
 where
     S: Scope,
     S::Timestamp: Lattice,
-    T: ExchangeData + BinOp + Into<Instruction>,
-    Instruction: Cast<T>,
+    T: ExchangeData + BinopExt + Into<Instruction>,
+    Instruction: RawCast<T>,
     R: Semigroup + Monoid + ExchangeData + OpsMul<Output = R> + Neg<Output = R>,
 {
     let [lhs_var, rhs_var, both_var, _]: [Stream<_, _>; 4] = instructions
-        .filter_map(|(id, binop)| binop.cast().map(|add| (id, add)))
+        .filter_map(|(id, binop)| binop.cast::<T>().map(|add| (id, add)))
         .inner
         .partition(4, |((id, binop), time, diff)| {
             let stream = match (binop.lhs().is_var(), binop.rhs().is_var()) {
@@ -176,16 +185,25 @@ where
                     (id, binop.dest(), binop.rhs()),
                 )
             })
-            .join_map(&constants, |_, &(id, dest, ref rhs), lhs| {
+            .join_map(&constants, |_, &(id, dest, ref rhs), (lhs, lhs_ty)| {
                 (
                     rhs.clone().as_var().unwrap(),
-                    (id, dest, Value::Const(lhs.clone())),
+                    (
+                        id,
+                        dest,
+                        Value::new(ValueKind::Const(lhs.clone()), lhs_ty.clone()),
+                    ),
                 )
             })
-            .join_map(&constants, |_, &(id, dest, ref lhs), rhs| {
+            .join_map(&constants, |_, &(id, dest, ref lhs), (rhs, rhs_ty)| {
                 (
                     id,
-                    T::from_parts(lhs.clone(), Value::Const(rhs.clone()), dest).into(),
+                    T::from_parts(
+                        lhs.clone(),
+                        Value::new(ValueKind::Const(rhs.clone()), rhs_ty.clone()),
+                        dest,
+                    )
+                    .into(),
                 )
             });
 
@@ -197,10 +215,15 @@ where
                     (id, binop.dest(), binop.rhs()),
                 )
             })
-            .join_map(&constants, |_, &(id, dest, ref rhs), lhs| {
+            .join_map(&constants, |_, &(id, dest, ref rhs), (lhs, lhs_ty)| {
                 (
                     id,
-                    T::from_parts(Value::Const(lhs.clone()), rhs.clone(), dest).into(),
+                    T::from_parts(
+                        Value::new(ValueKind::Const(lhs.clone()), lhs_ty.clone()),
+                        rhs.clone(),
+                        dest,
+                    )
+                    .into(),
                 )
             });
 
@@ -212,10 +235,15 @@ where
                     (id, binop.dest(), binop.lhs()),
                 )
             })
-            .join_map(&constants, |_, &(id, dest, ref lhs), rhs| {
+            .join_map(&constants, |_, &(id, dest, ref lhs), (rhs, rhs_ty)| {
                 (
                     id,
-                    T::from_parts(lhs.clone(), Value::Const(rhs.clone()), dest).into(),
+                    T::from_parts(
+                        lhs.clone(),
+                        Value::new(ValueKind::Const(rhs.clone()), rhs_ty.clone()),
+                        dest,
+                    )
+                    .into(),
                 )
             });
 
@@ -230,10 +258,15 @@ where
                 (id, binop.dest(), binop.rhs()),
             )
         })
-        .join_map(&constants, |_, &(id, dest, ref rhs), lhs| {
+        .join_map(&constants, |_, &(id, dest, ref rhs), (lhs, lhs_ty)| {
             (
                 id,
-                T::from_parts(Value::Const(lhs.clone()), rhs.clone(), dest).into(),
+                T::from_parts(
+                    Value::new(ValueKind::Const(lhs.clone()), lhs_ty.clone()),
+                    rhs.clone(),
+                    dest,
+                )
+                .into(),
             )
         });
 
@@ -245,10 +278,15 @@ where
                 (id, binop.dest(), binop.lhs()),
             )
         })
-        .join_map(&constants, |_, &(id, dest, ref lhs), rhs| {
+        .join_map(&constants, |_, &(id, dest, ref lhs), (rhs, rhs_ty)| {
             (
                 id,
-                T::from_parts(lhs.clone(), Value::Const(rhs.clone()), dest).into(),
+                T::from_parts(
+                    lhs.clone(),
+                    Value::new(ValueKind::Const(rhs.clone()), rhs_ty.clone()),
+                    dest,
+                )
+                .into(),
             )
         });
 
@@ -295,13 +333,13 @@ impl Evaluate for Div {
 
 fn evalutate_binary_op<S, T, R>(
     instructions: &Collection<S, (InstId, Instruction), R>,
-    constants: &Collection<S, (VarId, Constant), R>,
+    constants: &Collection<S, (VarId, (Constant, Type)), R>,
 ) -> Collection<S, (InstId, Instruction), R>
 where
     S: Scope,
     S::Timestamp: Lattice,
-    T: Evaluate<Output = Instruction> + BinOp + Data,
-    Instruction: Cast<T>,
+    T: Evaluate<Output = Instruction> + BinopExt + Data,
+    Instruction: RawCast<T>,
     R: Semigroup + ExchangeData + OpsMul<Output = R>,
 {
     let [both_const, lhs_const, rhs_const, no_const]: [Stream<_, _>; 4] = instructions
@@ -332,8 +370,13 @@ where
                 (id, binop.dest(), binop.lhs()),
             )
         })
-        .join_map(&constants, |_, &(id, dest, ref lhs), rhs| {
-            let evaluated = T::from_parts(lhs.clone(), Value::Const(rhs.clone()), dest).eval();
+        .join_map(&constants, |_, &(id, dest, ref lhs), (rhs, rhs_ty)| {
+            let evaluated = T::from_parts(
+                lhs.clone(),
+                Value::new(ValueKind::Const(rhs.clone()), rhs_ty.clone()),
+                dest,
+            )
+            .eval();
 
             (id, evaluated)
         });
@@ -346,8 +389,13 @@ where
                 (id, binop.dest(), binop.rhs()),
             )
         })
-        .join_map(&constants, |_, &(id, dest, ref rhs), lhs| {
-            let evaluated = T::from_parts(Value::Const(lhs.clone()), rhs.clone(), dest).eval();
+        .join_map(&constants, |_, &(id, dest, ref rhs), (lhs, lhs_ty)| {
+            let evaluated = T::from_parts(
+                Value::new(ValueKind::Const(lhs.clone()), lhs_ty.clone()),
+                rhs.clone(),
+                dest,
+            )
+            .eval();
 
             (id, evaluated)
         });
@@ -363,12 +411,19 @@ where
         .join_map(&constants, |_, &(id, dest, rhs), lhs| {
             (rhs, (id, dest, lhs.clone()))
         })
-        .join_map(&constants, |_, &(id, dest, ref lhs), rhs| {
-            let evaluated =
-                T::from_parts(Value::Const(lhs.clone()), Value::Const(rhs.clone()), dest).eval();
+        .join_map(
+            &constants,
+            |_, &(id, dest, (ref lhs, ref lhs_ty)), (rhs, rhs_ty)| {
+                let evaluated = T::from_parts(
+                    Value::new(ValueKind::Const(lhs.clone()), lhs_ty.clone()),
+                    Value::new(ValueKind::Const(rhs.clone()), rhs_ty.clone()),
+                    dest,
+                )
+                .eval();
 
-            (id, evaluated)
-        });
+                (id, evaluated)
+            },
+        );
 
     both_const
         .concat(&lhs_const)

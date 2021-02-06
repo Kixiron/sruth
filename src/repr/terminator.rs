@@ -1,5 +1,12 @@
-use crate::repr::{instruction::VarId, value::Value, BasicBlockId};
+use crate::repr::{
+    instruction::VarId,
+    utils::{DisplayCtx, IRDisplay},
+    value::Value,
+    BasicBlockId,
+};
 use abomonation_derive::Abomonation;
+use lasso::Resolver;
+use pretty::{DocAllocator, DocBuilder};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
 pub enum Terminator {
@@ -30,6 +37,35 @@ impl Terminator {
         match *self {
             Self::Jump(block) => Some(block).into_iter(),
             Self::Return(_) | Self::Unreachable => None.into_iter(),
+        }
+    }
+}
+
+impl IRDisplay for Terminator {
+    fn display<'a, D, A, R>(&self, ctx: DisplayCtx<'a, D, A, R>) -> DocBuilder<'a, D, A>
+    where
+        D: DocAllocator<'a, A>,
+        D::Doc: Clone,
+        A: Clone + 'a,
+        R: Resolver,
+    {
+        match self {
+            Self::Jump(addr) => ctx
+                .text("jump")
+                .append(ctx.space())
+                .append(addr.display(ctx))
+                .group(),
+
+            Self::Return(ret) => ctx
+                .text("ret")
+                .append(
+                    ret.as_ref()
+                        .map(|ret| ctx.space().append(ret.display(ctx)).append(ctx.space()))
+                        .unwrap_or_else(|| ctx.nil()),
+                )
+                .group(),
+
+            Self::Unreachable => ctx.text("unreachable"),
         }
     }
 }

@@ -1,27 +1,52 @@
 pub mod dataflow;
 pub mod optimize;
 pub mod repr;
+pub mod verify;
 
 #[cfg(test)]
 mod tests {
     use crate::{
-        dataflow::{self, Diff, Time},
+        dataflow::{
+            self,
+            operators::{CrossbeamExtractor, CrossbeamPusher},
+            Diff, Time, TraceManager,
+        },
         optimize,
         repr::{
+            basic_block::BasicBlockMeta,
             instruction::{Add, Assign, Div, Mul, Sub},
-            BasicBlock, BasicBlockId, Constant, FuncId, Function, Instruction, Terminator, Value,
-            VarId,
+            utils::{DisplayCtx, IRDisplay},
+            BasicBlock, BasicBlockId, Constant, FuncId, Function, Instruction, Terminator, Type,
+            Value, ValueKind, VarId,
         },
+        verify::{verify, ValidityError},
     };
     use dataflow::InputManager;
-    use differential_dataflow::operators::{
-        arrange::ArrangeByKey, Consolidate, Join, JoinCore, Reduce, Threshold,
+    use differential_dataflow::{
+        input::Input,
+        operators::{
+            arrange::{ArrangeByKey, ArrangeBySelf, TraceAgent},
+            Join, JoinCore, Reduce, Threshold,
+        },
+        trace::implementations::ord::OrdKeySpine,
     };
-    use std::{iter, num::NonZeroU64};
-    use timely::{dataflow::ProbeHandle, Config};
+    use lasso::ThreadedRodeo;
+    use pretty::{BoxAllocator, RefDoc};
+    use std::{io, iter, num::NonZeroU64, sync::Arc};
+    use timely::{
+        dataflow::{
+            operators::{capture::Extract, Capture},
+            ProbeHandle,
+        },
+        progress::frontier::AntichainRef,
+        Config,
+    };
 
     #[test]
     fn optimization_test() {
+        let interner = Arc::new(ThreadedRodeo::new());
+        let intern = interner.clone();
+
         let ir = vec![Function {
             name: None,
             id: FuncId::new(NonZeroU64::new(1).unwrap()),
@@ -31,104 +56,201 @@ mod tests {
                 id: BasicBlockId::new(NonZeroU64::new(1).unwrap()),
                 instructions: vec![
                     Instruction::Assign(Assign {
-                        value: Value::Const(Constant::Uint(100)),
+                        value: Value::new(ValueKind::Const(Constant::Uint(100)), Type::Uint),
                         dest: VarId::new(NonZeroU64::new(6).unwrap()),
                     }),
                     Instruction::Add(Add {
-                        rhs: Value::Var(VarId::new(NonZeroU64::new(6).unwrap())),
-                        lhs: Value::Const(Constant::Uint(300)),
+                        rhs: Value::new(
+                            ValueKind::Var(VarId::new(NonZeroU64::new(6).unwrap())),
+                            Type::Uint,
+                        ),
+                        lhs: Value::new(ValueKind::Const(Constant::Uint(300)), Type::Uint),
                         dest: VarId::new(NonZeroU64::new(1).unwrap()),
                     }),
                     Instruction::Mul(Mul {
-                        rhs: Value::Var(VarId::new(NonZeroU64::new(1).unwrap())),
-                        lhs: Value::Const(Constant::Uint(10)),
+                        rhs: Value::new(
+                            ValueKind::Var(VarId::new(NonZeroU64::new(1).unwrap())),
+                            Type::Uint,
+                        ),
+                        lhs: Value::new(ValueKind::Const(Constant::Uint(10)), Type::Uint),
                         dest: VarId::new(NonZeroU64::new(2).unwrap()),
                     }),
                     Instruction::Div(Div {
-                        rhs: Value::Var(VarId::new(NonZeroU64::new(2).unwrap())),
-                        lhs: Value::Const(Constant::Uint(10)),
+                        rhs: Value::new(
+                            ValueKind::Var(VarId::new(NonZeroU64::new(2).unwrap())),
+                            Type::Uint,
+                        ),
+                        lhs: Value::new(ValueKind::Const(Constant::Uint(10)), Type::Uint),
                         dest: VarId::new(NonZeroU64::new(3).unwrap()),
                     }),
                     Instruction::Sub(Sub {
-                        rhs: Value::Var(VarId::new(NonZeroU64::new(3).unwrap())),
-                        lhs: Value::Const(Constant::Uint(5)),
+                        rhs: Value::new(
+                            ValueKind::Var(VarId::new(NonZeroU64::new(3).unwrap())),
+                            Type::Uint,
+                        ),
+                        lhs: Value::new(ValueKind::Const(Constant::Uint(5)), Type::Uint),
                         dest: VarId::new(NonZeroU64::new(4).unwrap()),
                     }),
                     Instruction::Div(Div {
-                        rhs: Value::Var(VarId::new(NonZeroU64::new(2).unwrap())),
-                        lhs: Value::Const(Constant::Uint(10)),
+                        rhs: Value::new(
+                            ValueKind::Var(VarId::new(NonZeroU64::new(2).unwrap())),
+                            Type::Uint,
+                        ),
+                        lhs: Value::new(ValueKind::Const(Constant::Uint(10)), Type::Uint),
                         dest: VarId::new(NonZeroU64::new(5).unwrap()),
                     }),
                     Instruction::Sub(Sub {
-                        rhs: Value::Var(VarId::new(NonZeroU64::new(3).unwrap())),
-                        lhs: Value::Var(VarId::new(NonZeroU64::new(9).unwrap())),
+                        rhs: Value::new(
+                            ValueKind::Var(VarId::new(NonZeroU64::new(3).unwrap())),
+                            Type::Uint,
+                        ),
+                        lhs: Value::new(
+                            ValueKind::Var(VarId::new(NonZeroU64::new(9).unwrap())),
+                            Type::Uint,
+                        ),
                         dest: VarId::new(NonZeroU64::new(7).unwrap()),
                     }),
+                    Instruction::Sub(Sub {
+                        rhs: Value::new(
+                            ValueKind::Var(VarId::new(NonZeroU64::new(3).unwrap())),
+                            Type::Uint,
+                        ),
+                        lhs: Value::new(
+                            ValueKind::Var(VarId::new(NonZeroU64::new(7).unwrap())),
+                            Type::Int,
+                        ),
+                        dest: VarId::new(NonZeroU64::new(10).unwrap()),
+                    }),
                 ],
-                terminator: Terminator::Return(Some(Value::Var(VarId::new(
-                    NonZeroU64::new(4).unwrap(),
-                )))),
+                terminator: Terminator::Return(Some(Value::new(
+                    ValueKind::Var(VarId::new(NonZeroU64::new(4).unwrap())),
+                    Type::Uint,
+                ))),
             }],
         }];
 
-        timely::execute(Config::thread(), move |worker| {
-            let mut probe = ProbeHandle::new();
+        let (sender, receiver) = crossbeam_channel::unbounded();
 
-            let mut input_manager =
-                worker.dataflow_named("inputs", |scope| InputManager::new(scope));
+        timely::execute(Config::thread(), move |worker| {
+            let (mut probe, mut trace_manager) = (ProbeHandle::new(), TraceManager::new());
+
+            let mut input_manager = worker.dataflow_named("inputs", |scope| {
+                let mut input = InputManager::new(scope);
+
+                let (instructions, basic_blocks, functions) = (
+                    input
+                        .instruction_trace
+                        .import(scope)
+                        .as_collection(|&inst_id, inst| (inst_id, inst.clone())),
+                    input
+                        .basic_block_trace
+                        .import(scope)
+                        .as_collection(|&block, meta| (block, meta.clone())),
+                    input
+                        .function_trace
+                        .import(scope)
+                        .as_collection(|&func, meta| (func, meta.clone())),
+                );
+
+                let errors = verify(scope, &instructions, &basic_blocks, &functions)
+                    .probe_with(&mut probe)
+                    .arrange_by_self();
+
+                trace_manager.insert_trace::<TraceAgent<OrdKeySpine<ValidityError, Time, Diff>>>(
+                    interner.get_or_intern_static("input/errors"),
+                    errors.trace,
+                );
+
+                input
+            });
 
             let (mut instructions, mut terminators) =
                 worker.dataflow_named::<Time, _, _>("constant propagation", |scope| {
-                    let (propagated_instructions, _constants, propagated_terminators) =
+                    let (instructions, _constants, terminators) =
                         optimize::constant_folding::<_, Diff>(scope, &mut input_manager);
 
-                    let instruction_trace = propagated_instructions
-                        .probe_with(&mut probe)
-                        .arrange_by_key()
-                        .trace;
+                    let basic_blocks = input_manager.basic_block_trace.import(scope).join_map(
+                        &terminators,
+                        |&id, meta, term| {
+                            (
+                                id,
+                                BasicBlockMeta {
+                                    terminator: term.clone(),
+                                    ..meta.clone()
+                                },
+                            )
+                        },
+                    );
 
-                    let terminator_trace = propagated_terminators
-                        .probe_with(&mut probe)
-                        .arrange_by_key()
-                        .trace;
+                    let functions = input_manager
+                        .function_trace
+                        .import(scope)
+                        .as_collection(|&func, meta| (func, meta.clone()));
 
-                    (instruction_trace, terminator_trace)
+                    let errors = verify(scope, &instructions, &basic_blocks, &functions)
+                        .probe_with(&mut probe)
+                        .arrange_by_self();
+
+                    trace_manager
+                        .insert_trace::<TraceAgent<OrdKeySpine<ValidityError, Time, Diff>>>(
+                            interner.get_or_intern_static("constant-prop/errors"),
+                            errors.trace,
+                        );
+
+                    let instructions = instructions.probe_with(&mut probe).arrange_by_key().trace;
+                    trace_manager.insert_trace(
+                        interner.get_or_intern_static("constant-prop/instructions"),
+                        instructions.clone(),
+                    );
+
+                    let terminators = terminators.probe_with(&mut probe).arrange_by_key().trace;
+                    trace_manager.insert_trace(
+                        interner.get_or_intern_static("constant-prop/terminators"),
+                        terminators.clone(),
+                    );
+
+                    (instructions, terminators)
                 });
 
-            let (mut instructions, _) = worker.dataflow_named("cull dead code", |scope| {
-                let (instructions, terminators) = (
-                    instructions.import_named(scope, "instructions (post constant folding)"),
-                    terminators.import_named(scope, "terminators (post constant folding)"),
-                );
+            let (mut instructions, mut basic_blocks) =
+                worker.dataflow_named("cull dead code", |scope| {
+                    let (instructions, terminators) = (
+                        instructions.import_named(scope, "instructions (post constant folding)"),
+                        terminators.import_named(scope, "terminators (post constant folding)"),
+                    );
 
-                let (instructions, basic_blocks) =
-                    optimize::dead_code(scope, &mut input_manager, &instructions, &terminators);
+                    let (instructions, basic_blocks) =
+                        optimize::dead_code(scope, &mut input_manager, &instructions, &terminators);
 
-                let instructions = instructions.probe_with(&mut probe).arrange_by_key();
-                let basic_blocks = basic_blocks.probe_with(&mut probe).arrange_by_key();
+                    let instructions = instructions.probe_with(&mut probe).arrange_by_key();
+                    let basic_blocks = basic_blocks.probe_with(&mut probe).arrange_by_key();
 
-                (instructions.trace, basic_blocks.trace)
-            });
+                    (instructions.trace, basic_blocks.trace)
+                });
 
-            let _reconstructed = worker.dataflow_named("reconstruct ir", |scope| {
-                let (instructions, terminators, block_trace) = (
+            worker.dataflow_named("reconstruct ir", |scope| {
+                let (instructions, terminators, basic_blocks, block_trace) = (
                     instructions.import(scope),
                     terminators.import(scope),
+                    basic_blocks.import(scope),
                     input_manager.basic_block_trace.import(scope),
                 );
 
-                let mut basic_blocks = block_trace
-                    .flat_map_ref(|&block_id, meta| {
-                        meta.instructions
-                            .clone()
-                            .into_iter()
-                            .enumerate()
-                            .map(move |(idx, inst)| (inst, (block_id, idx)))
+                let live_blocks = basic_blocks.flat_map_ref(|_func, &block| iter::once(block));
+                let live_basic_blocks =
+                    block_trace
+                        .semijoin(&live_blocks)
+                        .flat_map(|(block_id, meta)| {
+                            meta.instructions
+                                .into_iter()
+                                .enumerate()
+                                .map(move |(idx, inst)| (inst, (block_id, idx)))
+                        });
+
+                let mut basic_blocks = live_basic_blocks
+                    .join_core(&instructions, |_inst, &(block, inst_idx), inst| {
+                        iter::once((block, (inst.to_owned(), inst_idx)))
                     })
-                    .join_core(&instructions, |_, &(block_id, inst_idx), inst| {
-                        iter::once((block_id, (inst.clone(), inst_idx)))
-                    })
-                    .consolidate()
                     .reduce(|_, input, output| {
                         let mut instructions: Vec<_> = input
                             .iter()
@@ -198,7 +320,6 @@ mod tests {
                             iter::once(((func_id, meta.clone()), (block_id, instructions.clone())))
                         },
                     )
-                    .consolidate()
                     .reduce(|&(func_id, ref meta), input, output| {
                         let basic_blocks: Vec<_> = input
                             .iter()
@@ -216,18 +337,68 @@ mod tests {
                             1,
                         ));
                     })
-                    .inspect(|x| println!("Output: {:#?}", x));
+                    .map(|((id, _meta), func)| (id, func))
+                    .probe_with(&mut probe);
 
-                functions.arrange_by_key().trace
+                trace_manager.insert_trace(
+                    interner.get_or_intern_static("reconstruct/functions"),
+                    functions.arrange_by_key().trace,
+                );
+
+                let (_, mut errors) = scope.new_collection();
+                let error_traces = &[
+                    interner.get_or_intern_static("input/errors"),
+                    interner.get_or_intern_static("constant-prop/errors"),
+                ];
+
+                for &trace in error_traces {
+                    let trace = trace_manager
+                        .get_trace::<TraceAgent<OrdKeySpine<ValidityError, Time, Diff>>>(trace)
+                        .unwrap()
+                        .import(scope)
+                        .as_collection(|error, _| Err(error.clone()));
+
+                    errors = errors.concat(&trace);
+                }
+
+                functions
+                    .map(Ok)
+                    .concat(&errors)
+                    .distinct_core::<Diff>()
+                    .inner
+                    .capture_into(CrossbeamPusher::new(sender.clone()));
             });
 
             if worker.index() == 0 {
-                dataflow::translate(&mut input_manager, ir.clone());
+                dataflow::translate(&mut input_manager, ir.clone(), &*interner);
             }
 
             input_manager.advance_to(1);
-            worker.step_while(|| !probe.less_than(&1));
+
+            let frontier = AntichainRef::new(&[1]);
+            trace_manager.advance_by(frontier);
+            trace_manager.distinguish_since(frontier);
+
+            worker.step_while(|| !probe.less_than(input_manager.time()));
         })
         .unwrap();
+
+        let alloc = BoxAllocator;
+        for (_time, data) in CrossbeamExtractor::new(receiver).extract() {
+            for (data, time, _diff) in data {
+                println!("Data from timestamp {}:", time);
+
+                match data {
+                    Ok((_id, func)) => {
+                        func.display::<BoxAllocator, RefDoc, _>(DisplayCtx::new(&alloc, &*intern))
+                            .1
+                            .render(70, &mut io::stdout())
+                            .unwrap();
+                    }
+
+                    Err(err) => println!("Error: {:?}", err),
+                }
+            }
+        }
     }
 }

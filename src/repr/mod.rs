@@ -3,6 +3,7 @@ pub mod constant;
 pub mod function;
 pub mod instruction;
 pub mod terminator;
+pub mod types;
 pub mod utils;
 pub mod value;
 
@@ -11,5 +12,6 @@ pub use constant::Constant;
 pub use function::{FuncId, Function};
 pub use instruction::{InstId, Instruction, VarId};
 pub use terminator::Terminator;
-pub use utils::{Cast, Ident, InstructionExt};
-pub use value::Value;
+pub use types::Type;
+pub use utils::{Cast, Ident, InstructionExt, RawCast};
+pub use value::{Value, ValueKind};

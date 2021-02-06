@@ -1,18 +1,35 @@
 use crate::{
     dataflow::InputManager,
-    repr::{basic_block::BasicBlockMeta, function::FunctionMeta, Function, InstId},
+    repr::{
+        basic_block::BasicBlockMeta,
+        function::FunctionMeta,
+        utils::{DisplayCtx, IRDisplay},
+        Function, InstId,
+    },
 };
 use differential_dataflow::{difference::Semigroup, lattice::Lattice};
-use std::num::NonZeroU64;
+use lasso::Resolver;
+use pretty::{BoxAllocator, RefDoc};
+use std::{io, num::NonZeroU64};
 use timely::progress::Timestamp;
 
-pub fn translate<T, R, I>(input: &mut InputManager<T, R>, functions: I)
+pub fn translate<T, R, I, S>(input: &mut InputManager<T, R>, functions: I, interner: &S)
 where
     T: Timestamp + Lattice + Clone,
     R: Semigroup + From<i8>,
     I: IntoIterator<Item = Function>,
+    S: Resolver,
 {
+    let alloc = BoxAllocator;
+
     for function in functions {
+        function
+            .display::<BoxAllocator, RefDoc, S>(DisplayCtx::new(&alloc, interner))
+            .1
+            .render(70, &mut io::stdout())
+            .unwrap();
+        println!();
+
         let meta = FunctionMeta::new(
             function.name,
             function.id,

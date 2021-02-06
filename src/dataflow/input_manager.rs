@@ -2,10 +2,13 @@ use crate::repr::{
     basic_block::BasicBlockMeta, function::FunctionMeta, BasicBlockId, FuncId, InstId, Instruction,
 };
 use differential_dataflow::{
-    difference::Semigroup,
+    difference::{Abelian, Semigroup},
     input::{Input, InputSession},
     lattice::Lattice,
-    operators::arrange::{ArrangeByKey, TraceAgent},
+    operators::{
+        arrange::{ArrangeByKey, TraceAgent},
+        Threshold,
+    },
     trace::implementations::ord::OrdValSpine,
     ExchangeData,
 };
@@ -34,6 +37,7 @@ where
     pub fn new<S>(scope: &mut S) -> Self
     where
         S: Scope<Timestamp = T> + Input,
+        R: Abelian + From<i8>,
     {
         let (instructions, instruction_trace) = scope.new_collection();
         let (basic_blocks, basic_block_trace) = scope.new_collection();
@@ -41,20 +45,11 @@ where
 
         Self {
             instructions,
-            instruction_trace: instruction_trace
-                .inspect(|x| println!("Input: {:?}", x))
-                .arrange_by_key()
-                .trace,
+            instruction_trace: instruction_trace.distinct_core().arrange_by_key().trace,
             basic_blocks,
-            basic_block_trace: basic_block_trace
-                .inspect(|x| println!("Input: {:?}", x))
-                .arrange_by_key()
-                .trace,
+            basic_block_trace: basic_block_trace.distinct_core().arrange_by_key().trace,
             functions,
-            function_trace: function_trace
-                .inspect(|x| println!("Input: {:?}", x))
-                .arrange_by_key()
-                .trace,
+            function_trace: function_trace.distinct_core().arrange_by_key().trace,
         }
     }
 
@@ -70,5 +65,12 @@ where
 
         self.functions.advance_to(time);
         self.functions.flush();
+    }
+
+    pub fn time(&self) -> &T {
+        debug_assert_eq!(self.instructions.time(), self.basic_blocks.time());
+        debug_assert_eq!(self.instructions.time(), self.functions.time());
+
+        self.instructions.time()
     }
 }

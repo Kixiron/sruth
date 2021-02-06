@@ -9,7 +9,7 @@ use differential_dataflow::{
     algorithms::graphs::propagate::propagate,
     difference::{Monoid, Semigroup},
     lattice::Lattice,
-    operators::{arrange::Arranged, Join, JoinCore},
+    operators::{arrange::Arranged, Consolidate, Join, JoinCore},
     trace::TraceReader,
     Collection, ExchangeData,
 };
@@ -40,17 +40,13 @@ where
         + 'static,
 {
     let block_trace = inputs.basic_block_trace.import(scope);
-    let basic_blocks = block_trace
-        .flat_map_ref(|&block, meta| {
-            meta.instructions
-                .clone()
-                .into_iter()
-                .map(move |inst| (inst, block))
-        })
-        .inspect(|_| println!("basic_blocks"));
-    let basic_block_ids = block_trace
-        .as_collection(|&block, _| block)
-        .inspect(|_| println!("basic_block_ids"));
+    let basic_blocks = block_trace.flat_map_ref(|&block, meta| {
+        meta.instructions
+            .clone()
+            .into_iter()
+            .map(move |inst| (inst, block))
+    });
+    let basic_block_ids = block_trace.as_collection(|&block, _| block);
 
     let culled_instructions = eliminate_unused_assigns(
         scope,
@@ -85,10 +81,10 @@ where
 {
     scope.region_named("eliminate unused assignments", |region| {
         let (instructions, terminators, basic_blocks, basic_block_ids) = (
-            instructions.enter_region(region),
-            terminators.enter_region(region),
-            basic_blocks.enter_region(region),
-            basic_block_ids.enter_region(region),
+            instructions.enter(region),
+            terminators.enter(region),
+            basic_blocks.enter(region).consolidate(),
+            basic_block_ids.enter(region),
         );
 
         let used_variables = basic_blocks
@@ -96,16 +92,14 @@ where
                 inst.used_vars().map(move |var| (block_id, var))
             })
             .concat(
-                &basic_block_ids
-                    .map(|block| (block, ()))
-                    .join_core(&terminators, |&block_id, (), term| {
-                        term.used_vars().map(move |var| (block_id, var))
-                    }),
+                &terminators
+                    .semijoin(&basic_block_ids)
+                    .flat_map(|(block_id, term)| term.used_vars().map(move |var| (block_id, var))),
             );
 
         let declared_variables = basic_blocks
             .join_core(&instructions, |&inst_id, &block_id, inst| {
-                iter::once(((block_id, inst.destination()), inst_id))
+                iter::once(((block_id, inst.dest()), inst_id))
             });
 
         let unused_vars = declared_variables
@@ -132,14 +126,14 @@ where
         + 'static,
 {
     scope.region_named("eliminate unreachable blocks", |region| {
-        let function_blocks = function_blocks.enter_region(region);
+        let function_blocks = function_blocks.enter(region);
 
         let roots =
             function_blocks.flat_map_ref(|&func_id, meta| iter::once((meta.entry, func_id)));
         let edges = basic_block_ids
-            .enter_region(region)
+            .enter(region)
             .map(|block| (block, ()))
-            .join_core(&terminators.enter_region(region), |&block, (), term| {
+            .join_core(&terminators.enter(region), |&block, (), term| {
                 term.succ().map(move |succ| (block, succ))
             });
 

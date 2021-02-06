@@ -1,5 +1,4 @@
 use differential_dataflow::{collection::AsCollection, difference::Semigroup, Collection};
-use std::{collections::VecDeque, iter};
 use timely::{
     dataflow::{channels::pact::Pipeline, operators::Operator, Scope, Stream},
     Data,
@@ -33,34 +32,16 @@ where
         L: FnMut(D) -> Option<D2> + 'static,
     {
         let mut buffer = Vec::new();
-        let mut work_queue = VecDeque::new();
 
-        self.unary(Pipeline, name, move |_capability, info| {
-            let activator = self.scope().activator_for(&info.address);
-
+        self.unary(Pipeline, name, move |_capability, _info| {
             move |input, output| {
                 input.for_each(|capability, data| {
-                    let capability = capability.retain();
                     data.swap(&mut buffer);
 
-                    work_queue.extend(buffer.drain(..).zip(iter::repeat(capability)));
+                    output
+                        .session(&capability)
+                        .give_iterator(buffer.drain(..).filter_map(|data| logic(data)))
                 });
-
-                let mut fuel = 1_000_000;
-                while let Some((element, capability)) = work_queue.pop_front() {
-                    if let Some(element) = logic(element) {
-                        output.session(&capability).give(element);
-                    }
-
-                    fuel -= 1;
-                    if fuel == 0 {
-                        break;
-                    }
-                }
-
-                if !work_queue.is_empty() {
-                    activator.activate();
-                }
             }
         })
     }
