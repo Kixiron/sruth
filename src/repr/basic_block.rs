@@ -62,6 +62,10 @@ impl BasicBlockId {
     pub const fn new(id: NonZeroU64) -> Self {
         Self(id)
     }
+
+    pub const fn as_u64(self) -> u64 {
+        self.0.get() - 1
+    }
 }
 
 impl IRDisplay for BasicBlockId {

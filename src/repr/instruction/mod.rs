@@ -66,6 +66,10 @@ impl InstId {
     pub const fn new(id: NonZeroU64) -> Self {
         Self(id)
     }
+
+    pub const fn as_u64(self) -> u64 {
+        self.0.get() - 1
+    }
 }
 
 macro_rules! impl_instruction {

@@ -1,14 +1,15 @@
-use crate::repr::{
-    basic_block::BasicBlockMeta, function::FunctionMeta, BasicBlockId, FuncId, InstId, Instruction,
+use crate::{
+    dataflow::operators::ArrangeByKeyExt,
+    repr::{
+        basic_block::BasicBlockMeta, function::FunctionMeta, BasicBlockId, FuncId, InstId,
+        Instruction,
+    },
 };
 use differential_dataflow::{
     difference::{Abelian, Semigroup},
     input::{Input, InputSession},
     lattice::Lattice,
-    operators::{
-        arrange::{ArrangeByKey, TraceAgent},
-        Threshold,
-    },
+    operators::{arrange::TraceAgent, Threshold},
     trace::implementations::ord::OrdValSpine,
     ExchangeData,
 };
@@ -39,17 +40,35 @@ where
         S: Scope<Timestamp = T> + Input,
         R: Abelian + From<i8>,
     {
-        let (instructions, instruction_trace) = scope.new_collection();
-        let (basic_blocks, basic_block_trace) = scope.new_collection();
-        let (functions, function_trace) = scope.new_collection();
+        let (instructions, instruction_trace) = scope.new_collection::<(InstId, Instruction), R>();
+        let (basic_blocks, basic_block_trace) =
+            scope.new_collection::<(BasicBlockId, BasicBlockMeta), R>();
+        let (functions, function_trace) = scope.new_collection::<(FuncId, FunctionMeta), R>();
+
+        // TODO: Exchange more intelligently to put all blocks & instructions for
+        //       a given function onto the same worker
+        let instruction_trace = instruction_trace
+            .distinct_core()
+            .arrange_by_key_exchange(|inst, _| inst.as_u64())
+            .trace;
+
+        let basic_block_trace = basic_block_trace
+            .distinct_core()
+            .arrange_by_key_exchange(|block, _| block.as_u64())
+            .trace;
+
+        let function_trace = function_trace
+            .distinct_core()
+            .arrange_by_key_exchange(|func, _| func.as_u64())
+            .trace;
 
         Self {
             instructions,
-            instruction_trace: instruction_trace.distinct_core().arrange_by_key().trace,
+            instruction_trace,
             basic_blocks,
-            basic_block_trace: basic_block_trace.distinct_core().arrange_by_key().trace,
+            basic_block_trace,
             functions,
-            function_trace: function_trace.distinct_core().arrange_by_key().trace,
+            function_trace,
         }
     }
 
