@@ -1,5 +1,5 @@
 use crate::{
-    dataflow::operators::ArrangeByKeyExt,
+    dataflow::operators::{ArrangeByKeyExt, DistinctExt},
     repr::{
         basic_block::BasicBlockMeta, function::FunctionMeta, BasicBlockId, FuncId, InstId,
         Instruction,
@@ -9,7 +9,7 @@ use differential_dataflow::{
     difference::{Abelian, Semigroup},
     input::{Input, InputSession},
     lattice::Lattice,
-    operators::{arrange::TraceAgent, Threshold},
+    operators::arrange::TraceAgent,
     trace::implementations::ord::OrdValSpine,
     ExchangeData,
 };
@@ -48,18 +48,18 @@ where
         // TODO: Exchange more intelligently to put all blocks & instructions for
         //       a given function onto the same worker
         let instruction_trace = instruction_trace
-            .distinct_core()
-            .arrange_by_key_exchange(|inst, _| inst.as_u64())
+            .distinct_exchange(|(inst, _)| inst.as_u64())
+            .arrange_by_key_pipelined()
             .trace;
 
         let basic_block_trace = basic_block_trace
-            .distinct_core()
-            .arrange_by_key_exchange(|block, _| block.as_u64())
+            .distinct_exchange(|(block, _)| block.as_u64())
+            .arrange_by_key_pipelined()
             .trace;
 
         let function_trace = function_trace
-            .distinct_core()
-            .arrange_by_key_exchange(|func, _| func.as_u64())
+            .distinct_exchange(|(func, _)| func.as_u64())
+            .arrange_by_key_pipelined()
             .trace;
 
         Self {
