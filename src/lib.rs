@@ -26,7 +26,8 @@ mod tests {
         input::Input,
         operators::{
             arrange::{ArrangeByKey, ArrangeBySelf, TraceAgent},
-            Join, JoinCore, Reduce, Threshold,
+            iterate::Variable,
+            Consolidate, Join, JoinCore, Reduce, Threshold,
         },
         trace::implementations::ord::OrdKeySpine,
     };
@@ -36,20 +37,28 @@ mod tests {
     use timely::{
         dataflow::{
             operators::{capture::Extract, Capture},
-            ProbeHandle,
+            ProbeHandle, Scope,
         },
+        order::Product,
         progress::frontier::AntichainRef,
         Config,
     };
+    use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
     #[test]
     fn optimization_test() {
+        let _ = tracing_subscriber::registry()
+            .with(tracing_subscriber::filter::LevelFilter::TRACE)
+            .with(tracing_subscriber::fmt::layer())
+            .try_init();
+
         let interner = Arc::new(ThreadedRodeo::new());
         let intern = interner.clone();
 
         let ir = vec![Function {
             name: None,
             id: FuncId::new(NonZeroU64::new(1).unwrap()),
+            params: vec![(VarId::new(NonZeroU64::new(13).unwrap()), Type::Uint)],
             entry: BasicBlockId::new(NonZeroU64::new(1).unwrap()),
             basic_blocks: vec![BasicBlock {
                 name: None,
@@ -99,31 +108,25 @@ mod tests {
                         lhs: Value::new(ValueKind::Const(Constant::Uint(10)), Type::Uint),
                         dest: VarId::new(NonZeroU64::new(5).unwrap()),
                     }),
-                    Instruction::Sub(Sub {
+                    Instruction::Mul(Mul {
                         rhs: Value::new(
-                            ValueKind::Var(VarId::new(NonZeroU64::new(3).unwrap())),
+                            ValueKind::Var(VarId::new(NonZeroU64::new(13).unwrap())),
                             Type::Uint,
                         ),
-                        lhs: Value::new(
-                            ValueKind::Var(VarId::new(NonZeroU64::new(9).unwrap())),
-                            Type::Uint,
-                        ),
-                        dest: VarId::new(NonZeroU64::new(7).unwrap()),
+                        lhs: Value::new(ValueKind::Const(Constant::Uint(0)), Type::Uint),
+                        dest: VarId::new(NonZeroU64::new(11).unwrap()),
                     }),
-                    Instruction::Sub(Sub {
-                        rhs: Value::new(
-                            ValueKind::Var(VarId::new(NonZeroU64::new(3).unwrap())),
+                    Instruction::Mul(Mul {
+                        rhs: Value::new(ValueKind::Const(Constant::Uint(0)), Type::Uint),
+                        lhs: Value::new(
+                            ValueKind::Var(VarId::new(NonZeroU64::new(13).unwrap())),
                             Type::Uint,
                         ),
-                        lhs: Value::new(
-                            ValueKind::Var(VarId::new(NonZeroU64::new(7).unwrap())),
-                            Type::Int,
-                        ),
-                        dest: VarId::new(NonZeroU64::new(10).unwrap()),
+                        dest: VarId::new(NonZeroU64::new(12).unwrap()),
                     }),
                 ],
                 terminator: Terminator::Return(Some(Value::new(
-                    ValueKind::Var(VarId::new(NonZeroU64::new(4).unwrap())),
+                    ValueKind::Var(VarId::new(NonZeroU64::new(12).unwrap())),
                     Type::Uint,
                 ))),
             }],
@@ -166,8 +169,45 @@ mod tests {
 
             let (mut instructions, mut terminators) =
                 worker.dataflow_named::<Time, _, _>("constant propagation", |scope| {
-                    let (instructions, _constants, terminators) =
-                        optimize::constant_folding::<_, Diff>(scope, &mut input_manager);
+                    let (instructions, terminators) = (
+                        input_manager
+                            .instruction_trace
+                            .import(scope)
+                            .as_collection(|&id, inst| (id, inst.clone())),
+                        input_manager
+                            .basic_block_trace
+                            .import(scope)
+                            .as_collection(|&id, meta| (id, meta.terminator.clone())),
+                    );
+
+                    let (instructions, terminators) = scope.scoped::<Product<_, Time>, _, _>(
+                        "constant folding and peephole optimization",
+                        |scope| {
+                            let instructions = Variable::new_from(
+                                instructions.enter(scope),
+                                Product::new(Default::default(), 1),
+                            );
+                            let terminators = Variable::new_from(
+                                terminators.enter(scope),
+                                Product::new(Default::default(), 1),
+                            );
+
+                            let (folded_instructions, folded_terminators) =
+                                optimize::constant_folding::<_, Diff>(
+                                    scope,
+                                    &instructions,
+                                    &terminators,
+                                );
+
+                            let peeped_instructions =
+                                optimize::peephole(scope, &folded_instructions).consolidate();
+
+                            (
+                                instructions.set(&peeped_instructions).leave(),
+                                terminators.set(&folded_terminators.consolidate()).leave(),
+                            )
+                        },
+                    );
 
                     let basic_blocks = input_manager.basic_block_trace.import(scope).join_map(
                         &terminators,
@@ -222,8 +262,14 @@ mod tests {
                     let (instructions, basic_blocks) =
                         optimize::dead_code(scope, &mut input_manager, &instructions, &terminators);
 
-                    let instructions = instructions.probe_with(&mut probe).arrange_by_key();
-                    let basic_blocks = basic_blocks.probe_with(&mut probe).arrange_by_key();
+                    let instructions = instructions
+                        .consolidate()
+                        .probe_with(&mut probe)
+                        .arrange_by_key();
+                    let basic_blocks = basic_blocks
+                        .consolidate()
+                        .probe_with(&mut probe)
+                        .arrange_by_key();
 
                     (instructions.trace, basic_blocks.trace)
                 });
@@ -236,7 +282,7 @@ mod tests {
                     input_manager.basic_block_trace.import(scope),
                 );
 
-                let live_blocks = basic_blocks.flat_map_ref(|_func, &block| iter::once(block));
+                let live_blocks = basic_blocks.as_collection(|_func, &block| block);
                 let live_basic_blocks =
                     block_trace
                         .semijoin(&live_blocks)
@@ -282,8 +328,8 @@ mod tests {
 
                 let terminated_blocks = terminators.semijoin(
                     &block_trace
-                        .flat_map_ref(|&block_id, _| iter::once(block_id))
-                        .threshold(|_, &diff| if diff >= 1 { 1 } else { 0 }),
+                        .as_collection(|&block_id, _| block_id)
+                        .distinct_core::<Diff>(),
                 );
 
                 // Add back in the blocks which have no instructions
@@ -331,6 +377,7 @@ mod tests {
                             Function {
                                 name: meta.name,
                                 id: func_id,
+                                params: meta.params.clone(),
                                 entry: meta.entry,
                                 basic_blocks,
                             },
@@ -384,10 +431,10 @@ mod tests {
         .unwrap();
 
         let alloc = BoxAllocator;
-        for (_time, data) in CrossbeamExtractor::new(receiver).extract() {
-            for (data, time, _diff) in data {
-                println!("Data from timestamp {}:", time);
+        for (time, data) in CrossbeamExtractor::new(receiver).extract() {
+            println!("Data from timestamp {}:", time);
 
+            for (data, _time, _diff) in data {
                 match data {
                     Ok((_id, func)) => {
                         func.display::<BoxAllocator, RefDoc, _>(DisplayCtx::new(&alloc, &*intern))

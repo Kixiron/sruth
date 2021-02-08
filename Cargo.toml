@@ -16,6 +16,10 @@ abomonation_derive = "0.5.0"
 version = "0.4.1"
 features = ["multi-threaded"]
 
+[dependencies.tracing]
+version = "0.1.23"
+default-features = false
+
 [dependencies.pretty]
 version = "0.10.0"
 default-features = false
@@ -28,6 +32,9 @@ default-features = false
 git = "https://github.com/TimelyDataflow/differential-dataflow"
 rev = "2b12f29d951b60c6c1ef3db77fbba1568db5a2c3"
 default-features = false
+
+[dev-dependencies]
+tracing-subscriber = "0.2.15"
 
 [profile.dev]
 opt-level = 0

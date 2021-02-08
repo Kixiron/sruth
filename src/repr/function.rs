@@ -1,5 +1,5 @@
 use super::{utils::IRDisplay, BasicBlockId};
-use crate::repr::{utils::DisplayCtx, BasicBlock, Ident};
+use crate::repr::{utils::DisplayCtx, BasicBlock, Ident, Type, VarId};
 use abomonation_derive::Abomonation;
 use lasso::Resolver;
 use pretty::{DocAllocator, DocBuilder};
@@ -9,6 +9,8 @@ use std::num::NonZeroU64;
 pub struct Function {
     pub name: Option<Ident>,
     pub id: FuncId,
+    // TODO: Struct param
+    pub params: Vec<(VarId, Type)>,
     pub entry: BasicBlockId,
     pub basic_blocks: Vec<BasicBlock>,
 }
@@ -29,7 +31,18 @@ impl IRDisplay for Function {
         ctx.text("def")
             .append(ctx.space())
             .append(name)
-            .append(ctx.nil().parens())
+            .append(
+                ctx.intersperse(
+                    self.params.iter().map(|(var, ty)| {
+                        ty.display(ctx)
+                            .append(ctx.space())
+                            .append(var.display(ctx))
+                            .group()
+                    }),
+                    ctx.text(",").append(ctx.space()),
+                )
+                .parens(),
+            )
             .append(ctx.space())
             .append(ctx.text("{"))
             .group()
@@ -100,6 +113,7 @@ impl IRDisplay for FuncId {
 pub struct FunctionMeta {
     pub name: Option<Ident>,
     pub id: FuncId,
+    pub params: Vec<(VarId, Type)>,
     pub entry: BasicBlockId,
     pub basic_blocks: Vec<BasicBlockId>,
 }
@@ -108,12 +122,14 @@ impl FunctionMeta {
     pub const fn new(
         name: Option<Ident>,
         id: FuncId,
+        params: Vec<(VarId, Type)>,
         entry: BasicBlockId,
         basic_blocks: Vec<BasicBlockId>,
     ) -> Self {
         Self {
             name,
             id,
+            params,
             entry,
             basic_blocks,
         }

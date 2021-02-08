@@ -14,6 +14,10 @@ pub struct Assign {
 }
 
 impl Assign {
+    pub const fn new(dest: VarId, value: Value) -> Self {
+        Self { value, dest }
+    }
+
     pub const fn is_const(&self) -> bool {
         self.value.is_const()
     }

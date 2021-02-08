@@ -1,6 +1,8 @@
-use crate::repr::{InstId, Instruction, InstructionExt, Type, Value, VarId};
-use differential_dataflow::{difference::Semigroup, Collection};
+use crate::repr::{Cast, InstId, Instruction, InstructionExt, RawCast, Type, Value, VarId};
+use differential_dataflow::{difference::Semigroup, Collection, Data};
 use timely::dataflow::Scope;
+
+use super::FilterMap;
 
 pub trait CollectUsages {
     type Output;
@@ -108,6 +110,43 @@ where
             stream
                 .flat_map(|(id, inst)| inst.used_values().map(move |val| (id, val)))
                 .leave_region()
+        })
+    }
+}
+
+pub trait CollectCastable<S, I, T, R>
+where
+    S: Scope,
+    R: Semigroup,
+{
+    fn collect_castable<U>(&self) -> Collection<S, (I, U), R>
+    where
+        T: RawCast<U>,
+        U: Data,
+    {
+        self.collect_castable_named("CollectCastable")
+    }
+
+    fn collect_castable_named<U>(&self, name: &str) -> Collection<S, (I, U), R>
+    where
+        T: RawCast<U>,
+        U: Data;
+}
+
+impl<S, I, T, R> CollectCastable<S, I, T, R> for Collection<S, (I, T), R>
+where
+    S: Scope,
+    T: Data,
+    I: Data,
+    R: Semigroup,
+{
+    fn collect_castable_named<U>(&self, name: &str) -> Collection<S, (I, U), R>
+    where
+        T: RawCast<U>,
+        U: Data,
+    {
+        self.filter_map_named(name, |(id, value)| {
+            value.cast::<U>().map(move |val| (id, val))
         })
     }
 }

@@ -1,7 +1,9 @@
 use crate::{
-    dataflow::{operators::FilterMap, InputManager, Time},
+    dataflow::{
+        operators::{CollectCastable, FilterMap},
+        Time,
+    },
     repr::{
-        basic_block::BasicBlockMeta,
         instruction::{Add, Assign, BinopExt, Div, Mul, Sub},
         BasicBlockId, Cast, Constant, InstId, Instruction, RawCast, Terminator, Type, Value,
         ValueKind, VarId,
@@ -9,10 +11,8 @@ use crate::{
 };
 use differential_dataflow::{
     difference::{Monoid, Semigroup},
-    input::Input,
     lattice::Lattice,
-    operators::{arrange::Arranged, iterate::Variable, Consolidate, Join},
-    trace::TraceReader,
+    operators::{iterate::Variable, Consolidate, Join},
     AsCollection, Collection, Data, ExchangeData,
 };
 use std::{
@@ -26,107 +26,115 @@ use timely::{
 
 type ConstProp<S, R> = (
     Collection<S, (InstId, Instruction), R>,
-    Collection<S, (VarId, (Constant, Type)), R>,
     Collection<S, (BasicBlockId, Terminator), R>,
 );
 
 pub fn constant_folding<S, R>(
     scope: &mut S,
-    inputs: &mut InputManager<S::Timestamp, R>,
+    instructions: &Collection<S, (InstId, Instruction), R>,
+    terminators: &Collection<S, (BasicBlockId, Terminator), R>,
 ) -> ConstProp<S, R>
 where
-    S: Scope + Input,
+    S: Scope,
     S::Timestamp: Lattice + Clone,
     R: Semigroup + Monoid + ExchangeData + OpsMul<Output = R> + Neg<Output = R> + From<i8>,
 {
-    let instructions = inputs
-        .instruction_trace
-        .import(scope)
-        .as_collection(|&id, inst| (id, inst.clone()));
-
-    let seed_constants = instructions.filter_map(|(_, inst)| {
-        inst.cast().and_then(|Assign { value, dest }| {
-            let (value, ty) = value.split();
-            value.into_const().map(|constant| (dest, (constant, ty)))
-        })
-    });
-
-    let (propagated_instructions, constants) =
-        scope.scoped::<Product<_, Time>, _, _>("iterative constant propagation", |nested| {
-            let instructions = Variable::new_from(
-                instructions.enter(nested),
-                Product::new(Default::default(), 1),
-            );
-            let constants = Variable::new_from(
-                seed_constants.enter(nested),
-                Product::new(Default::default(), 1),
-            );
-
-            // Evaluate binary operations
-            let evaluated_binops = evalutate_binary_op::<_, Add, _>(&instructions, &constants)
-                .concat(&evalutate_binary_op::<_, Sub, _>(&instructions, &constants))
-                .concat(&evalutate_binary_op::<_, Mul, _>(&instructions, &constants))
-                .concat(&evalutate_binary_op::<_, Div, _>(&instructions, &constants));
-
-            // Add the newly derived constants to the stream of constants
-            let new_constants = evaluated_binops
-                .map(|(_, assign)| {
-                    let assign: Assign = assign.cast().unwrap();
-                    let (value, ty) = assign.value.split();
-
-                    (assign.dest, (value.into_const().unwrap(), ty))
-                })
-                .concat(&constants)
-                .consolidate();
-
-            // Replace the instructions we've modified
-            let new_instructions = instructions
-                .antijoin(&evaluated_binops.map(|(id, _)| id))
-                .concat(&evaluated_binops)
-                .consolidate();
-
-            (
-                instructions.set(&new_instructions).leave(),
-                constants.set(&new_constants).leave(),
-            )
+    let span = tracing::debug_span!("constant folding");
+    span.in_scope(|| {
+        let seed_constants = instructions.filter_map(|(_, inst)| {
+            inst.cast().and_then(|Assign { value, dest }| {
+                let (value, ty) = value.split();
+                value.into_const().map(|constant| (dest, (constant, ty)))
+            })
         });
 
-    let instructions = promote_constants(&propagated_instructions, &constants);
-    let terminators = propagate_to_terminators(&inputs.basic_block_trace.import(scope), &constants);
+        let (instructions, terminators) =
+            scope.scoped::<Product<_, Time>, _, _>("iterative constant propagation", |nested| {
+                let instructions = Variable::new_from(
+                    instructions.enter(nested),
+                    Product::new(Default::default(), 1),
+                );
+                let constants = Variable::new_from(
+                    seed_constants.enter(nested),
+                    Product::new(Default::default(), 1),
+                );
+                let terminators = Variable::new_from(
+                    terminators.enter(nested),
+                    Product::new(Default::default(), 1),
+                );
 
-    (instructions, constants, terminators)
+                // Evaluate binary operations
+                let evaluated_binops = evalutate_binary_op::<_, Add, _>(&instructions, &constants)
+                    .concat(&evalutate_binary_op::<_, Sub, _>(&instructions, &constants))
+                    .concat(&evalutate_binary_op::<_, Mul, _>(&instructions, &constants))
+                    .concat(&evalutate_binary_op::<_, Div, _>(&instructions, &constants));
+
+                // Replace the instructions we've modified
+                let new_instructions = instructions
+                    .antijoin(&evaluated_binops.map(|(id, _)| id))
+                    .concat(&evaluated_binops);
+
+                // Add the newly derived constants to the stream of constants
+                let new_constants = new_instructions
+                    .collect_castable::<Assign>()
+                    .map(|(_, assign)| {
+                        let (value, ty) = assign.value.split();
+                        (assign.dest, (value.into_const().unwrap(), ty))
+                    })
+                    .consolidate();
+
+                let promoted_instructions =
+                    promote_constants(&new_instructions, &new_constants).consolidate();
+
+                let folded_terminators =
+                    propagate_to_terminators(&terminators, &new_constants).consolidate();
+
+                constants.set(&new_constants);
+
+                (
+                    instructions.set(&promoted_instructions).leave(),
+                    terminators.set(&folded_terminators).leave(),
+                )
+            });
+
+        (instructions, terminators)
+    })
 }
 
-fn propagate_to_terminators<S, R, A>(
-    blocks: &Arranged<S, A>,
+fn propagate_to_terminators<S, R>(
+    terminators: &Collection<S, (BasicBlockId, Terminator), R>,
     constants: &Collection<S, (VarId, (Constant, Type)), R>,
 ) -> Collection<S, (BasicBlockId, Terminator), R>
 where
     S: Scope,
     S::Timestamp: Lattice,
-    R: Semigroup + ExchangeData + OpsMul<Output = R>,
-    A: TraceReader<Key = BasicBlockId, Val = BasicBlockMeta, Time = S::Timestamp, R = R> + Clone,
+    R: Semigroup + Monoid + ExchangeData + OpsMul<Output = R> + Neg<Output = R>,
 {
-    let returns = blocks
-        .as_collection(|&id, meta| (id, meta.terminator.clone()))
-        .filter_map(|(id, term)| {
-            term.into_return()
-                .flatten()
-                .and_then(|term| term.as_var().map(|var| (var, term.ty)))
-                .map(|(var, ty)| (var, (id, ty)))
+    let returns = terminators.filter_map(|(id, term)| {
+        term.into_return()
+            .flatten()
+            .and_then(|term| term.as_var().map(|var| (var, term.ty)))
+            .map(|(var, ty)| (var, (id, ty)))
+    });
+
+    let folded_terminators =
+        returns.join_map(constants, |_, &(id, ref ret_ty), (constant, const_ty)| {
+            assert_eq!(ret_ty, const_ty);
+
+            (
+                id,
+                Terminator::Return(Some(Value::new(
+                    ValueKind::Const(constant.clone()),
+                    const_ty.clone(),
+                ))),
+            )
         });
 
-    returns.join_map(constants, |_, &(id, ref ret_ty), (constant, const_ty)| {
-        assert_eq!(ret_ty, const_ty);
-
-        (
-            id,
-            Terminator::Return(Some(Value::new(
-                ValueKind::Const(constant.clone()),
-                const_ty.clone(),
-            ))),
-        )
-    })
+    terminators
+        .map(|term| (term, ()))
+        .antijoin(&folded_terminators)
+        .map(|(term, ())| term)
+        .concat(&folded_terminators)
 }
 
 fn promote_constants<S, R>(
@@ -159,8 +167,9 @@ where
     Instruction: RawCast<T>,
     R: Semigroup + Monoid + ExchangeData + OpsMul<Output = R> + Neg<Output = R>,
 {
+    // TODO: Partition for collections
     let [lhs_var, rhs_var, both_var, _]: [Stream<_, _>; 4] = instructions
-        .filter_map(|(id, binop)| binop.cast::<T>().map(|add| (id, add)))
+        .collect_castable::<T>()
         .inner
         .partition(4, |((id, binop), time, diff)| {
             let stream = match (binop.lhs().is_var(), binop.rhs().is_var()) {
@@ -360,7 +369,8 @@ where
 
     let both_const = both_const
         .as_collection()
-        .map(|(id, binop)| (id, binop.eval()));
+        .map(|(id, binop)| (id, binop.eval()))
+        .inspect(|((id, inst), _, _)| tracing::trace!(inst = ?inst, "folded {:?}", id));
 
     let lhs_const = lhs_const
         .as_collection()

@@ -39,28 +39,31 @@ where
         + Clone
         + 'static,
 {
-    let block_trace = inputs.basic_block_trace.import(scope);
-    let basic_blocks = block_trace.flat_map_ref(|&block, meta| {
-        meta.instructions
-            .clone()
-            .into_iter()
-            .map(move |inst| (inst, block))
-    });
-    let basic_block_ids = block_trace.as_collection(|&block, _| block);
+    let span = tracing::debug_span!("dead code elimination");
+    span.in_scope(|| {
+        let block_trace = inputs.basic_block_trace.import(scope);
+        let basic_blocks = block_trace.flat_map_ref(|&block, meta| {
+            meta.instructions
+                .clone()
+                .into_iter()
+                .map(move |inst| (inst, block))
+        });
+        let basic_block_ids = block_trace.as_collection(|&block, _| block);
 
-    let culled_instructions = eliminate_unused_assigns(
-        scope,
-        instructions,
-        terminators,
-        &basic_blocks,
-        &basic_block_ids,
-    );
+        let culled_instructions = eliminate_unused_assigns(
+            scope,
+            instructions,
+            terminators,
+            &basic_blocks,
+            &basic_block_ids,
+        );
 
-    let function_blocks = inputs.function_trace.import(scope);
-    let culled_blocks =
-        eliminate_unreachable_blocks(scope, &function_blocks, terminators, &basic_block_ids);
+        let function_blocks = inputs.function_trace.import(scope);
+        let culled_blocks =
+            eliminate_unreachable_blocks(scope, &function_blocks, terminators, &basic_block_ids);
 
-    (culled_instructions, culled_blocks)
+        (culled_instructions, culled_blocks)
+    })
 }
 
 fn eliminate_unused_assigns<S, R, A1, A2>(
@@ -104,9 +107,13 @@ where
 
         let unused_vars = declared_variables
             .antijoin(&used_variables)
-            .map(|((_block_id, _dest), inst_id)| inst_id);
+            .map(|((_block_id, _dest), inst_id)| inst_id)
+            .inspect(|(inst, _, _)| tracing::trace!("removing unused assign {:?}", inst));
 
-        instructions.antijoin(&unused_vars).leave_region()
+        instructions
+            .as_collection(|&id, inst| (id, inst.clone()))
+            .antijoin(&unused_vars)
+            .leave_region()
     })
 }
 

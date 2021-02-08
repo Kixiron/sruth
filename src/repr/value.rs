@@ -19,6 +19,25 @@ impl Value {
         Self { value, ty }
     }
 
+    pub fn map<F>(self, map: F) -> Self
+    where
+        F: FnOnce(ValueKind) -> ValueKind,
+    {
+        let value = map(self.value);
+        Self { value, ty: self.ty }
+    }
+
+    pub fn and_then<F>(self, map: F) -> Self
+    where
+        F: FnOnce(ValueKind) -> Option<ValueKind>,
+    {
+        if let Some(value) = map(self.value.clone()) {
+            Self { value, ty: self.ty }
+        } else {
+            self
+        }
+    }
+
     pub const fn ty(&self) -> &Type {
         &self.ty
     }
@@ -101,6 +120,18 @@ impl ValueKind {
         } else {
             None
         }
+    }
+}
+
+impl From<Constant> for ValueKind {
+    fn from(constant: Constant) -> Self {
+        Self::Const(constant)
+    }
+}
+
+impl From<VarId> for ValueKind {
+    fn from(var: VarId) -> Self {
+        Self::Var(var)
     }
 }
 

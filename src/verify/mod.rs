@@ -34,11 +34,18 @@ where
     S::Timestamp: Lattice + Ord,
     R: Semigroup + Abelian + ExchangeData + Mul<Output = R> + From<i8>,
 {
+    let function_params = functions.flat_map(|(_, meta)| meta.params);
+
     let used_variables = instructions.collect_usages();
     let declared_variables = instructions.collect_declarations();
 
-    let undeclared_variables = used_variables.antijoin(&declared_variables.map(|(var, _)| var));
+    let undeclared_variables = used_variables.antijoin(
+        &declared_variables
+            .map(|(var, _)| var)
+            .concat(&function_params.map(|(var, _)| var)),
+    );
 
+    // TODO: Redecls of params
     #[allow(clippy::suspicious_map)]
     let redeclarations = declared_variables
         .map(|(var, _)| var)
@@ -80,7 +87,7 @@ where
             },
         );
 
-    let variable_types = instructions.collect_var_types();
+    let variable_types = instructions.collect_var_types().concat(&function_params);
     let malformed_variables = undeclared_variables
         .map(|(var, _)| var)
         .concat(&redeclarations.map(|(_, var)| var));

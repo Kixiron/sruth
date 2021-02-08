@@ -33,6 +33,7 @@ where
         let meta = FunctionMeta::new(
             function.name,
             function.id,
+            function.params,
             function.entry,
             function.basic_blocks.iter().map(|block| block.id).collect(),
         );

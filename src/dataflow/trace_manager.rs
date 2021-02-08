@@ -24,10 +24,12 @@ impl<T> TraceManager<T> {
     where
         Trace: ManagedTrace<T> + 'static,
     {
+        tracing::debug!("inserting trace {:?}", key);
         self.traces.insert(key, Box::new(trace))
     }
 
     pub fn remove_trace(&mut self, key: Spur) -> Option<Box<dyn ManagedTrace<T>>> {
+        tracing::debug!("removing trace {:?}", key);
         self.traces.remove(&key)
     }
 
@@ -36,6 +38,8 @@ impl<T> TraceManager<T> {
         T: 'static,
         Trace: ManagedTrace<T> + Any + Clone,
     {
+        tracing::debug!("getting trace {:?}", key);
+
         self.traces
             .get(&key)
             .and_then(|trace| {
@@ -50,12 +54,16 @@ impl<T> TraceManager<T> {
     }
 
     pub fn advance_by(&mut self, frontier: AntichainRef<'_, T>) {
+        tracing::info!("advancing traces");
+
         for trace in self.traces.values_mut() {
             trace.advance_by(frontier);
         }
     }
 
     pub fn distinguish_since(&mut self, frontier: AntichainRef<'_, T>) {
+        tracing::info!("distinguishing traces");
+
         for trace in self.traces.values_mut() {
             trace.distinguish_since(frontier);
         }
