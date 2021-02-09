@@ -10,8 +10,11 @@ use pretty::{DocAllocator, DocBuilder};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
 pub enum Terminator {
+    // TODO: Make this hold a label & a dedicated `Jump` struct
     Jump(BasicBlockId),
+    // TODO: Make a `Return` struct
     Return(Option<Value>),
+    Branch(Branch),
     Unreachable,
 }
 
@@ -25,19 +28,48 @@ impl Terminator {
         }
     }
 
-    pub fn used_vars(&self) -> impl Iterator<Item = VarId> {
-        match self {
-            Self::Jump(_) => None.into_iter(),
-            Self::Return(ret) => ret.as_ref().and_then(Value::as_var).into_iter(),
-            Self::Unreachable => None.into_iter(),
+    pub const fn into_branch(self) -> Option<Branch> {
+        if let Self::Branch(branch) = self {
+            Some(branch)
+        } else {
+            None
         }
     }
 
-    pub fn succ(&self) -> impl Iterator<Item = BasicBlockId> {
-        match *self {
-            Self::Jump(block) => Some(block).into_iter(),
-            Self::Return(_) | Self::Unreachable => None.into_iter(),
+    pub fn used_vars(&self) -> Vec<VarId> {
+        match self {
+            Self::Jump(_) => Vec::new(),
+            Self::Branch(branch) => branch.used_vars(),
+            Self::Return(ret) => {
+                if let Some(val) = ret.as_ref().and_then(Value::as_var) {
+                    vec![val]
+                } else {
+                    Vec::new()
+                }
+            }
+            Self::Unreachable => Vec::new(),
         }
+    }
+
+    pub fn succ(&self) -> Vec<BasicBlockId> {
+        match self {
+            &Self::Jump(block) => vec![block],
+            Self::Branch(branch) => branch.succ(),
+            Self::Return(_) | Self::Unreachable => Vec::new(),
+        }
+    }
+
+    pub fn replace_uses(&mut self, from: VarId, to: VarId) -> bool {
+        if let Self::Return(Some(value)) = self {
+            if let Some(var) = value.as_var_mut() {
+                if *var == from {
+                    *var = to;
+                    return true;
+                }
+            }
+        }
+
+        false
     }
 }
 
@@ -66,6 +98,81 @@ impl IRDisplay for Terminator {
                 .group(),
 
             Self::Unreachable => ctx.text("unreachable"),
+
+            Self::Branch(branch) => branch.display(ctx),
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
+pub struct Branch {
+    pub cond: Value,
+    pub if_true: Label,
+    pub if_false: Label,
+}
+
+impl Branch {
+    pub const fn new(cond: Value, if_true: Label, if_false: Label) -> Self {
+        Self {
+            cond,
+            if_true,
+            if_false,
+        }
+    }
+
+    pub fn used_vars(&self) -> Vec<VarId> {
+        // TODO: Make this a method on value
+        if let Some(val) = self.cond.as_var() {
+            vec![val]
+        } else {
+            Vec::new()
+        }
+    }
+
+    pub fn succ(&self) -> Vec<BasicBlockId> {
+        vec![self.if_true.block, self.if_false.block]
+    }
+}
+
+impl IRDisplay for Branch {
+    fn display<'a, D, A, R>(&self, ctx: DisplayCtx<'a, D, A, R>) -> DocBuilder<'a, D, A>
+    where
+        D: DocAllocator<'a, A>,
+        D::Doc: Clone,
+        A: Clone + 'a,
+        R: Resolver,
+    {
+        ctx.text("branch")
+            .append(self.cond.display(ctx))
+            .append(ctx.text(","))
+            .append(ctx.space())
+            .append(self.if_true.display(ctx))
+            .append(ctx.text(","))
+            .append(ctx.space())
+            .append(self.if_false.display(ctx))
+            .group()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
+pub struct Label {
+    pub block: BasicBlockId,
+}
+
+impl Label {
+    pub const fn new(block: BasicBlockId) -> Self {
+        Self { block }
+    }
+}
+
+impl IRDisplay for Label {
+    fn display<'a, D, A, R>(&self, ctx: DisplayCtx<'a, D, A, R>) -> DocBuilder<'a, D, A>
+    where
+        D: DocAllocator<'a, A>,
+        D::Doc: Clone,
+        A: Clone + 'a,
+        R: Resolver,
+    {
+        self.block.display(ctx)
     }
 }

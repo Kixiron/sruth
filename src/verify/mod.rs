@@ -23,6 +23,9 @@ use differential_dataflow::{
 use std::{iter, ops::Mul};
 use timely::dataflow::Scope;
 
+// TODO: Every path is terminated
+// TODO: Check function param types
+
 pub fn verify<S, R>(
     scope: &mut S,
     instructions: &Collection<S, (InstId, Instruction), R>,
@@ -54,8 +57,12 @@ where
         .join_map(&declared_variables, |&var, _count, &inst| (inst, var));
 
     let block_ids = basic_blocks.map(|(block, _)| block);
-    let targeted_blocks = basic_blocks
-        .flat_map(|(block, meta)| meta.terminator.succ().map(move |target| (target, block)));
+    let targeted_blocks = basic_blocks.flat_map(|(block, meta)| {
+        meta.terminator
+            .succ()
+            .into_iter()
+            .map(move |target| (target, block))
+    });
 
     let undeclared_blocks = targeted_blocks
         .antijoin(&block_ids)

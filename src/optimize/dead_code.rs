@@ -9,7 +9,7 @@ use differential_dataflow::{
     algorithms::graphs::propagate::propagate,
     difference::{Monoid, Semigroup},
     lattice::Lattice,
-    operators::{arrange::Arranged, Consolidate, Join, JoinCore},
+    operators::{arrange::Arranged, Consolidate, Count, Join, JoinCore},
     trace::TraceReader,
     Collection, ExchangeData,
 };
@@ -22,6 +22,7 @@ use timely::dataflow::Scope;
 type ReducedCode<S, R> = (
     Collection<S, (InstId, Instruction), R>,
     Collection<S, (FuncId, BasicBlockId), R>,
+    Collection<S, (FuncId, FunctionMeta), R>,
 );
 
 pub fn dead_code<S, R, A1, A2>(
@@ -62,7 +63,55 @@ where
         let culled_blocks =
             eliminate_unreachable_blocks(scope, &function_blocks, terminators, &basic_block_ids);
 
-        (culled_instructions, culled_blocks)
+        let compacted_blocks =
+            compact_basic_blocks(scope, &culled_blocks, &function_blocks, &terminators);
+
+        (culled_instructions, culled_blocks, compacted_blocks)
+    })
+}
+
+fn compact_basic_blocks<S, R, A1, A2>(
+    scope: &mut S,
+    culled_blocks: &Collection<S, (FuncId, BasicBlockId), R>,
+    function_blocks: &Arranged<S, A1>,
+    terminators: &Arranged<S, A2>,
+) -> Collection<S, (FuncId, FunctionMeta), R>
+where
+    S: Scope,
+    S::Timestamp: Lattice,
+    R: Semigroup + ExchangeData + Mul<Output = R> + From<i8>,
+    A1: TraceReader<Key = FuncId, Val = FunctionMeta, R = R, Time = S::Timestamp> + Clone + 'static,
+    A2: TraceReader<Key = BasicBlockId, Val = Terminator, R = R, Time = S::Timestamp>
+        + Clone
+        + 'static,
+{
+    scope.region_named("compact basic blocks", |region| {
+        let (culled_blocks, function_blocks, terminators) = (
+            culled_blocks.enter(region),
+            function_blocks.enter(region),
+            terminators.enter(region),
+        );
+
+        // A collection of successors to the blocks that predecess them
+        let predecessors = terminators
+            .flat_map_ref(|&block, term| term.succ().into_iter().map(move |succ| (succ, block)));
+
+        let predecessors = culled_blocks
+            .map(|(func, block)| (block, func))
+            .join_map(&predecessors, |&block, &func, &pre| ((block, func), pre));
+
+        #[allow(clippy::suspicious_map)]
+        let one_predecessor = predecessors
+            .map(|((block, func), _)| (block, func))
+            .count()
+            .filter(|(_, count)| count == &R::from(1));
+
+        let all_predecessors = one_predecessor
+            .join(&predecessors)
+            .consolidate()
+            .reduce(|| {});
+
+        todo!()
     })
 }
 
@@ -97,7 +146,9 @@ where
             .concat(
                 &terminators
                     .semijoin(&basic_block_ids)
-                    .flat_map(|(block_id, term)| term.used_vars().map(move |var| (block_id, var))),
+                    .flat_map(|(block_id, term)| {
+                        term.used_vars().into_iter().map(move |var| (block_id, var))
+                    }),
             );
 
         let declared_variables = basic_blocks
@@ -141,7 +192,7 @@ where
             .enter(region)
             .map(|block| (block, ()))
             .join_core(&terminators.enter(region), |&block, (), term| {
-                term.succ().map(move |succ| (block, succ))
+                term.succ().into_iter().map(move |succ| (block, succ))
             });
 
         let reachable_blocks =

@@ -9,16 +9,12 @@ use pretty::{DocAllocator, DocBuilder};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
 pub struct Add {
-    pub rhs: Value,
     pub lhs: Value,
+    pub rhs: Value,
     pub dest: VarId,
 }
 
 impl Add {
-    pub const fn is_const(&self) -> bool {
-        self.rhs.is_const() && self.lhs.is_const()
-    }
-
     pub fn evaluate(self) -> Option<Instruction> {
         let (rhs, lhs) = (self.rhs.into_const()?, self.lhs.into_const()?);
 
@@ -68,8 +64,8 @@ impl IRDisplay for Add {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
 pub struct Sub {
-    pub rhs: Value,
     pub lhs: Value,
+    pub rhs: Value,
     pub dest: VarId,
 }
 
@@ -123,8 +119,8 @@ impl IRDisplay for Sub {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
 pub struct Mul {
-    pub rhs: Value,
     pub lhs: Value,
+    pub rhs: Value,
     pub dest: VarId,
 }
 
@@ -178,8 +174,8 @@ impl IRDisplay for Mul {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
 pub struct Div {
-    pub rhs: Value,
     pub lhs: Value,
+    pub rhs: Value,
     pub dest: VarId,
 }
 
@@ -246,6 +242,36 @@ pub trait BinopExt: InstructionExt {
 macro_rules! impl_binop {
     ($($type:ident),* $(,)?) => {
         $(
+            impl $type {
+                pub const fn new(lhs: Value, rhs: Value, dest: VarId) -> Self {
+                    Self { lhs, rhs, dest }
+                }
+
+                pub fn replace_uses(&mut self, from: VarId, to: VarId) -> bool {
+                    let mut replaced = false;
+
+                    if let Some(var) = self.lhs.as_var_mut() {
+                        if *var == from {
+                            *var = to;
+                            replaced = true
+                        }
+                    }
+
+                    if let Some(var) = self.rhs.as_var_mut() {
+                        if *var == from {
+                            *var = to;
+                            replaced = true
+                        }
+                    }
+
+                    replaced
+                }
+
+                pub const fn is_const(&self) -> bool {
+                    self.rhs.is_const() && self.lhs.is_const()
+                }
+            }
+
             impl BinopExt for $type {
                 fn lhs(&self) -> Value {
                     self.lhs.clone()

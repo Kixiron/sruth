@@ -14,12 +14,32 @@ pub enum Constant {
 }
 
 impl Constant {
+    pub const fn as_bool(&self) -> Option<bool> {
+        if let Self::Bool(bool) = *self {
+            Some(bool)
+        } else {
+            None
+        }
+    }
+
     pub fn ty(&self) -> Type {
         match self {
             Self::Bool(_) => Type::Bool,
             Self::Int(_) => Type::Int,
             Self::Uint(_) => Type::Uint,
         }
+    }
+
+    pub const fn is_zero(&self) -> bool {
+        match *self {
+            Self::Int(int) if int == 0 => true,
+            Self::Uint(uint) if uint == 0 => true,
+            Self::Bool(_) | Self::Int(_) | Self::Uint(_) => false,
+        }
+    }
+
+    pub const fn is_signed_int(&self) -> bool {
+        matches!(self, Self::Int(_))
     }
 }
 

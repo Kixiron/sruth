@@ -1,14 +1,14 @@
 use crate::{
     dataflow::operators::{CollectCastable, FilterMap},
     repr::{
-        instruction::{Assign, BinopExt, Mul},
+        instruction::{Assign, BinopExt, Mul, Neg, Sub},
         Constant, InstId, Instruction, InstructionExt,
     },
 };
 use differential_dataflow::{
     difference::{Abelian, Semigroup},
     lattice::Lattice,
-    operators::{Consolidate, Join},
+    operators::{consolidate::ConsolidateStream, Consolidate, Join},
     Collection, ExchangeData,
 };
 use std::ops::Mul as Mult;
@@ -22,19 +22,15 @@ where
     S: Scope,
     S::Timestamp: Lattice,
     R: Semigroup + Abelian + ExchangeData + Mult<Output = R>,
-    // A1: TraceReader<Key = InstId, Val = Instruction, R = R, Time = S::Timestamp> + Clone + 'static,
 {
     let span = tracing::debug_span!("peephole optimization");
     span.in_scope(|| {
         scope.region_named("peephole optimization", |region| {
-            let seed_instructions = instructions.enter(region);
-            let mul_by_zero = apply::<_, _, MulByZero>(&seed_instructions);
+            let instructions = instructions.enter(region).consolidate_stream();
+            let instructions = apply::<_, _, MulByZero>(&instructions).consolidate_stream();
+            let instructions = apply::<_, _, SubtractZero>(&instructions);
 
-            seed_instructions
-                .antijoin(&mul_by_zero.map(|(id, _)| id))
-                .concat(&mul_by_zero)
-                .consolidate()
-                .leave_region()
+            instructions.consolidate().leave_region()
         })
     })
 }
@@ -44,11 +40,16 @@ fn apply<S, R, P>(
 ) -> Collection<S, (InstId, Instruction), R>
 where
     S: Scope,
-    R: Semigroup,
+    S::Timestamp: Lattice,
+    R: Semigroup + Abelian + ExchangeData + Mult<Output = R>,
     P: PeepholePass,
 {
     let span = tracing::debug_span!("peephole pass", name = P::name());
-    span.in_scope(|| P::stream_instructions(instructions))
+    let reduced = span.in_scope(|| P::stream_instructions(instructions));
+
+    instructions
+        .antijoin(&reduced.map(|(inst, _)| inst))
+        .concat(&reduced)
 }
 
 pub trait PeepholePass {
@@ -111,6 +112,50 @@ impl PeepholePass for MulByZero {
                         Instruction::Assign(assign)
                     })
                     .map(|inst| (id, inst))
+            })
+    }
+}
+
+struct SubtractZero;
+
+impl PeepholePass for SubtractZero {
+    fn name() -> &'static str {
+        "subtract zero"
+    }
+
+    fn stream_instructions<S, R>(
+        instructions: &Collection<S, (InstId, Instruction), R>,
+    ) -> Collection<S, (InstId, Instruction), R>
+    where
+        S: Scope,
+        R: Semigroup,
+    {
+        // TODO: This could be a `.map_in_place()`
+        instructions
+            .collect_castable::<Sub>()
+            .filter_map(|(id, sub)| {
+                if let Some(constant) = sub.lhs().as_const() {
+                    // TODO: figure out unsigned interactions
+                    if constant.is_zero() && constant.is_signed_int() {
+                        tracing::trace!(
+                            inst = ?id,
+                            "reduced `0 - x` to `-x`",
+                        );
+
+                        return Some((id, Instruction::Neg(Neg::new(sub.dest(), sub.rhs()))));
+                    }
+                } else if let Some(constant) = sub.rhs().as_const() {
+                    if constant.is_zero() {
+                        tracing::trace!(
+                            inst = ?id,
+                            "reduced `x - 0` to `x`",
+                        );
+
+                        return Some((id, Instruction::Assign(Assign::new(sub.dest(), sub.lhs()))));
+                    }
+                }
+
+                None
             })
     }
 }

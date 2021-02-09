@@ -14,6 +14,15 @@ pub struct Value {
     pub ty: Type,
 }
 
+impl From<Constant> for Value {
+    fn from(constant: Constant) -> Self {
+        let ty = constant.ty();
+        let value = ValueKind::from(constant);
+
+        Self { value, ty }
+    }
+}
+
 impl Value {
     pub const fn new(value: ValueKind, ty: Type) -> Self {
         Self { value, ty }
@@ -60,6 +69,10 @@ impl Value {
 
     pub const fn as_var(&self) -> Option<VarId> {
         self.value.as_var()
+    }
+
+    pub fn as_var_mut(&mut self) -> Option<&mut VarId> {
+        self.value.as_var_mut()
     }
 
     pub const fn split(self) -> (ValueKind, Type) {
@@ -116,6 +129,14 @@ impl ValueKind {
 
     pub const fn as_var(&self) -> Option<VarId> {
         if let Self::Var(var) = *self {
+            Some(var)
+        } else {
+            None
+        }
+    }
+
+    pub fn as_var_mut(&mut self) -> Option<&mut VarId> {
+        if let Self::Var(var) = self {
             Some(var)
         } else {
             None

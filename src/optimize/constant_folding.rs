@@ -1,6 +1,6 @@
 use crate::{
     dataflow::{
-        operators::{CollectCastable, FilterMap},
+        operators::{CollectCastable, CollectUsages, FilterMap, FilterSplit},
         Time,
     },
     repr::{
@@ -77,23 +77,35 @@ where
                 // Add the newly derived constants to the stream of constants
                 let new_constants = new_instructions
                     .collect_castable::<Assign>()
-                    .map(|(_, assign)| {
+                    .filter_map(|(_, assign)| {
                         let (value, ty) = assign.value.split();
-                        (assign.dest, (value.into_const().unwrap(), ty))
+                        let dest = assign.dest;
+
+                        value
+                            .into_const()
+                            .map(move |constant| (dest, (constant, ty)))
                     })
                     .consolidate();
 
-                let promoted_instructions =
-                    promote_constants(&new_instructions, &new_constants).consolidate();
+                let promoted_instructions = promote_constants(&new_instructions, &new_constants);
 
                 let folded_terminators =
                     propagate_to_terminators(&terminators, &new_constants).consolidate();
 
+                let (eliminated_instructions, eliminated_terminators) = eliminate_redundant_assigns(
+                    &promoted_instructions.consolidate(),
+                    &folded_terminators.consolidate(),
+                );
+
                 constants.set(&new_constants);
 
                 (
-                    instructions.set(&promoted_instructions).leave(),
-                    terminators.set(&folded_terminators).leave(),
+                    instructions
+                        .set(&eliminated_instructions.consolidate())
+                        .leave(),
+                    terminators
+                        .set(&eliminated_terminators.consolidate())
+                        .leave(),
                 )
             });
 
@@ -117,7 +129,7 @@ where
             .map(|(var, ty)| (var, (id, ty)))
     });
 
-    let folded_terminators =
+    let folded_returns =
         returns.join_map(constants, |_, &(id, ref ret_ty), (constant, const_ty)| {
             assert_eq!(ret_ty, const_ty);
 
@@ -130,10 +142,52 @@ where
             )
         });
 
+    let branches = terminators.filter_map(|(id, term)| term.into_branch().map(move |br| (id, br)));
+    let (branch_const, branch_vars) =
+        branches.filter_split(|(id, br)| match br.cond.value.clone() {
+            ValueKind::Const(constant) => (Some((id, (constant, br))), None),
+            ValueKind::Var(var) => (None, Some((var, (id, br)))),
+        });
+
+    let const_branches = branch_const
+        .map(|(id, (constant, br))| {
+            if constant.as_bool().unwrap() {
+                (id, Terminator::Jump(br.if_true.block))
+            } else {
+                (id, Terminator::Jump(br.if_false.block))
+            }
+        })
+        .inspect(|((id, term), _, _)| {
+            tracing::trace!("folded constant branch at {:?} into {:?}", id, term);
+        });
+
+    let var_branches = branch_vars
+        .join_map(&constants, |_var, &(id, ref br), (constant, _ty)| {
+            if constant.as_bool().unwrap() {
+                (id, Terminator::Jump(br.if_true.block))
+            } else {
+                (id, Terminator::Jump(br.if_false.block))
+            }
+        })
+        .inspect(|((id, term), _, _)| {
+            tracing::trace!("folded constant var branch at {:?} into {:?}", id, term);
+        });
+
+    let identical_branches = branches
+        .antijoin(&const_branches.concat(&var_branches).map(|(id, _)| id))
+        .filter(|(_, br)| br.if_true == br.if_false)
+        .map(|(id, br)| (id, Terminator::Jump(br.if_true.block)))
+        .inspect(|((id, term), _, _)| {
+            tracing::trace!("folded identical branch at {:?} into {:?}", id, term);
+        });
+
+    let folded_terminators = folded_returns
+        .concat(&const_branches)
+        .concat(&var_branches)
+        .concat(&identical_branches);
+
     terminators
-        .map(|term| (term, ()))
-        .antijoin(&folded_terminators)
-        .map(|(term, ())| term)
+        .antijoin(&folded_terminators.map(|(id, _)| id))
         .concat(&folded_terminators)
 }
 
@@ -439,4 +493,71 @@ where
         .concat(&lhs_const)
         .concat(&rhs_const)
         .concat(&no_const)
+}
+
+fn eliminate_redundant_assigns<S, R>(
+    instructions: &Collection<S, (InstId, Instruction), R>,
+    terminators: &Collection<S, (BasicBlockId, Terminator), R>,
+) -> ConstProp<S, R>
+where
+    S: Scope,
+    S::Timestamp: Lattice,
+    R: Semigroup + Monoid + ExchangeData + OpsMul<Output = R> + Neg<Output = R>,
+{
+    let redundant_assignments = instructions
+        .filter_map(|(id, inst)| {
+            let var = inst
+                .cast::<Assign>()
+                .and_then(|assign| assign.value.as_var().map(|var| (assign.dest, var)));
+            var.map(|(dest, var)| (id, (dest, var)))
+        })
+        .inspect(|((id, (dest, var)), _, _)| {
+            tracing::trace!(
+                "eliminating redundant assignment at {:?}, rewriting refs from {:?} to {:?}",
+                id,
+                dest,
+                var,
+            );
+        });
+
+    let use_sites = instructions.collect_usages().join_map(
+        &redundant_assignments.map(|(_, (from, to))| (from, to)),
+        |&from, &inst, &to| (inst, (from, to)),
+    );
+
+    let rewritten_instructions = instructions
+        .join_map(&use_sites, |&id, inst, &(from, to)| {
+            let mut inst = inst.clone();
+            inst.replace_uses(from, to);
+
+            (id, inst)
+        })
+        .inspect(|((inst, _), _, _)| tracing::trace!("rewrote variables for {:?}", inst));
+
+    let instructions = instructions
+        .antijoin(&redundant_assignments.map(|(id, _)| id))
+        .antijoin(&rewritten_instructions.map(|(id, _)| id))
+        .concat(&rewritten_instructions);
+
+    let terminator_usages = terminators
+        .flat_map(|(block, term)| term.used_vars().into_iter().map(move |var| (var, block)))
+        .join_map(
+            &redundant_assignments.map(|(_, (from, to))| (from, to)),
+            |&from, &block, &to| (block, (from, to)),
+        );
+
+    let rewritten_terminators = terminators
+        .join_map(&terminator_usages, |&block, term, &(from, to)| {
+            let mut term = term.clone();
+            term.replace_uses(from, to);
+
+            (block, term)
+        })
+        .inspect(|((block, _), _, _)| tracing::trace!("rewrote variables for {:?}", block));
+
+    let terminators = terminators
+        .antijoin(&rewritten_terminators.map(|(id, _)| id))
+        .concat(&rewritten_terminators);
+
+    (instructions, terminators)
 }

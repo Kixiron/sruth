@@ -21,6 +21,17 @@ impl Assign {
     pub const fn is_const(&self) -> bool {
         self.value.is_const()
     }
+
+    pub fn replace_uses(&mut self, from: VarId, to: VarId) -> bool {
+        if let Some(var) = self.value.as_var_mut() {
+            if *var == from {
+                *var = to;
+                return true;
+            }
+        }
+
+        false
+    }
 }
 
 impl InstructionExt for Assign {

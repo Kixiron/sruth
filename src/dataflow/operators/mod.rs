@@ -6,6 +6,7 @@ mod distinct;
 mod event_utils;
 mod exchange;
 mod filter_map;
+mod partition;
 mod split;
 
 pub use arrange::{ArrangeByKeyExt, ArrangeBySelfExt};
@@ -18,4 +19,5 @@ pub use distinct::DistinctExt;
 pub use event_utils::{CrossbeamExtractor, CrossbeamPusher};
 pub use exchange::ExchangeExt;
 pub use filter_map::FilterMap;
+pub use partition::PartitionExt;
 pub use split::{FilterSplit, Split};

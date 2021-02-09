@@ -44,6 +44,15 @@ impl Bitcast {
     pub fn is_redundant(&self) -> bool {
         self.dest_ty == self.source_ty
     }
+
+    pub fn replace_uses(&mut self, from: VarId, to: VarId) -> bool {
+        if self.source == from {
+            self.source = to;
+            true
+        } else {
+            false
+        }
+    }
 }
 
 impl InstructionExt for Bitcast {

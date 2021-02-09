@@ -15,6 +15,7 @@ mod tests {
         repr::{
             basic_block::BasicBlockMeta,
             instruction::{Add, Assign, Div, Mul, Sub},
+            terminator::{Branch, Label},
             utils::{DisplayCtx, IRDisplay},
             BasicBlock, BasicBlockId, Constant, FuncId, Function, Instruction, Terminator, Type,
             Value, ValueKind, VarId,
@@ -60,76 +61,96 @@ mod tests {
             id: FuncId::new(NonZeroU64::new(1).unwrap()),
             params: vec![(VarId::new(NonZeroU64::new(13).unwrap()), Type::Uint)],
             entry: BasicBlockId::new(NonZeroU64::new(1).unwrap()),
-            basic_blocks: vec![BasicBlock {
-                name: None,
-                id: BasicBlockId::new(NonZeroU64::new(1).unwrap()),
-                instructions: vec![
-                    Instruction::Assign(Assign {
-                        value: Value::new(ValueKind::Const(Constant::Uint(100)), Type::Uint),
-                        dest: VarId::new(NonZeroU64::new(6).unwrap()),
-                    }),
-                    Instruction::Add(Add {
-                        rhs: Value::new(
-                            ValueKind::Var(VarId::new(NonZeroU64::new(6).unwrap())),
-                            Type::Uint,
-                        ),
-                        lhs: Value::new(ValueKind::Const(Constant::Uint(300)), Type::Uint),
-                        dest: VarId::new(NonZeroU64::new(1).unwrap()),
-                    }),
-                    Instruction::Mul(Mul {
-                        rhs: Value::new(
-                            ValueKind::Var(VarId::new(NonZeroU64::new(1).unwrap())),
-                            Type::Uint,
-                        ),
-                        lhs: Value::new(ValueKind::Const(Constant::Uint(10)), Type::Uint),
-                        dest: VarId::new(NonZeroU64::new(2).unwrap()),
-                    }),
-                    Instruction::Div(Div {
-                        rhs: Value::new(
-                            ValueKind::Var(VarId::new(NonZeroU64::new(2).unwrap())),
-                            Type::Uint,
-                        ),
-                        lhs: Value::new(ValueKind::Const(Constant::Uint(10)), Type::Uint),
-                        dest: VarId::new(NonZeroU64::new(3).unwrap()),
-                    }),
-                    Instruction::Sub(Sub {
-                        rhs: Value::new(
-                            ValueKind::Var(VarId::new(NonZeroU64::new(3).unwrap())),
-                            Type::Uint,
-                        ),
-                        lhs: Value::new(ValueKind::Const(Constant::Uint(5)), Type::Uint),
-                        dest: VarId::new(NonZeroU64::new(4).unwrap()),
-                    }),
-                    Instruction::Div(Div {
-                        rhs: Value::new(
-                            ValueKind::Var(VarId::new(NonZeroU64::new(2).unwrap())),
-                            Type::Uint,
-                        ),
-                        lhs: Value::new(ValueKind::Const(Constant::Uint(10)), Type::Uint),
-                        dest: VarId::new(NonZeroU64::new(5).unwrap()),
-                    }),
-                    Instruction::Mul(Mul {
-                        rhs: Value::new(
-                            ValueKind::Var(VarId::new(NonZeroU64::new(13).unwrap())),
-                            Type::Uint,
-                        ),
-                        lhs: Value::new(ValueKind::Const(Constant::Uint(0)), Type::Uint),
-                        dest: VarId::new(NonZeroU64::new(11).unwrap()),
-                    }),
-                    Instruction::Mul(Mul {
-                        rhs: Value::new(ValueKind::Const(Constant::Uint(0)), Type::Uint),
-                        lhs: Value::new(
-                            ValueKind::Var(VarId::new(NonZeroU64::new(13).unwrap())),
-                            Type::Uint,
-                        ),
-                        dest: VarId::new(NonZeroU64::new(12).unwrap()),
-                    }),
-                ],
-                terminator: Terminator::Return(Some(Value::new(
-                    ValueKind::Var(VarId::new(NonZeroU64::new(12).unwrap())),
-                    Type::Uint,
-                ))),
-            }],
+            basic_blocks: vec![
+                BasicBlock {
+                    name: None,
+                    id: BasicBlockId::new(NonZeroU64::new(1).unwrap()),
+                    instructions: vec![],
+                    terminator: Terminator::Branch(Branch::new(
+                        Constant::Bool(true).into(),
+                        Label::new(BasicBlockId::new(NonZeroU64::new(2).unwrap())),
+                        Label::new(BasicBlockId::new(NonZeroU64::new(2).unwrap())),
+                    )),
+                },
+                BasicBlock {
+                    name: None,
+                    id: BasicBlockId::new(NonZeroU64::new(2).unwrap()),
+                    instructions: vec![
+                        Instruction::Assign(Assign {
+                            value: Value::new(ValueKind::Const(Constant::Uint(100)), Type::Uint),
+                            dest: VarId::new(NonZeroU64::new(6).unwrap()),
+                        }),
+                        Instruction::Add(Add {
+                            lhs: Value::new(ValueKind::Const(Constant::Uint(300)), Type::Uint),
+                            rhs: Value::new(
+                                ValueKind::Var(VarId::new(NonZeroU64::new(6).unwrap())),
+                                Type::Uint,
+                            ),
+                            dest: VarId::new(NonZeroU64::new(1).unwrap()),
+                        }),
+                        Instruction::Mul(Mul {
+                            lhs: Value::new(ValueKind::Const(Constant::Uint(10)), Type::Uint),
+                            rhs: Value::new(
+                                ValueKind::Var(VarId::new(NonZeroU64::new(1).unwrap())),
+                                Type::Uint,
+                            ),
+                            dest: VarId::new(NonZeroU64::new(2).unwrap()),
+                        }),
+                        Instruction::Div(Div {
+                            lhs: Value::new(ValueKind::Const(Constant::Uint(10)), Type::Uint),
+                            rhs: Value::new(
+                                ValueKind::Var(VarId::new(NonZeroU64::new(2).unwrap())),
+                                Type::Uint,
+                            ),
+                            dest: VarId::new(NonZeroU64::new(3).unwrap()),
+                        }),
+                        Instruction::Sub(Sub {
+                            lhs: Value::new(ValueKind::Const(Constant::Uint(5)), Type::Uint),
+                            rhs: Value::new(
+                                ValueKind::Var(VarId::new(NonZeroU64::new(3).unwrap())),
+                                Type::Uint,
+                            ),
+                            dest: VarId::new(NonZeroU64::new(4).unwrap()),
+                        }),
+                        Instruction::Div(Div {
+                            lhs: Value::new(ValueKind::Const(Constant::Uint(10)), Type::Uint),
+                            rhs: Value::new(
+                                ValueKind::Var(VarId::new(NonZeroU64::new(2).unwrap())),
+                                Type::Uint,
+                            ),
+                            dest: VarId::new(NonZeroU64::new(5).unwrap()),
+                        }),
+                        Instruction::Mul(Mul {
+                            lhs: Value::new(ValueKind::Const(Constant::Uint(0)), Type::Uint),
+                            rhs: Value::new(
+                                ValueKind::Var(VarId::new(NonZeroU64::new(13).unwrap())),
+                                Type::Uint,
+                            ),
+                            dest: VarId::new(NonZeroU64::new(11).unwrap()),
+                        }),
+                        Instruction::Mul(Mul {
+                            lhs: Value::new(
+                                ValueKind::Var(VarId::new(NonZeroU64::new(13).unwrap())),
+                                Type::Uint,
+                            ),
+                            rhs: Value::new(ValueKind::Const(Constant::Uint(0)), Type::Uint),
+                            dest: VarId::new(NonZeroU64::new(12).unwrap()),
+                        }),
+                        Instruction::Sub(Sub {
+                            lhs: Value::new(
+                                ValueKind::Var(VarId::new(NonZeroU64::new(13).unwrap())),
+                                Type::Uint,
+                            ),
+                            rhs: Value::new(ValueKind::Const(Constant::Uint(0)), Type::Uint),
+                            dest: VarId::new(NonZeroU64::new(14).unwrap()),
+                        }),
+                    ],
+                    terminator: Terminator::Return(Some(Value::new(
+                        ValueKind::Var(VarId::new(NonZeroU64::new(14).unwrap())),
+                        Type::Uint,
+                    ))),
+                },
+            ],
         }];
 
         let (sender, receiver) = crossbeam_channel::unbounded();
