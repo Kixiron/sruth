@@ -36,6 +36,14 @@ impl Terminator {
         }
     }
 
+    pub const fn into_jump(self) -> Option<BasicBlockId> {
+        if let Self::Jump(jump) = self {
+            Some(jump)
+        } else {
+            None
+        }
+    }
+
     pub fn used_vars(&self) -> Vec<VarId> {
         match self {
             Self::Jump(_) => Vec::new(),
@@ -51,10 +59,10 @@ impl Terminator {
         }
     }
 
-    pub fn succ(&self) -> Vec<BasicBlockId> {
+    pub fn jump_targets(&self) -> Vec<BasicBlockId> {
         match self {
             &Self::Jump(block) => vec![block],
-            Self::Branch(branch) => branch.succ(),
+            Self::Branch(branch) => branch.jump_targets(),
             Self::Return(_) | Self::Unreachable => Vec::new(),
         }
     }
@@ -129,7 +137,7 @@ impl Branch {
         }
     }
 
-    pub fn succ(&self) -> Vec<BasicBlockId> {
+    pub fn jump_targets(&self) -> Vec<BasicBlockId> {
         vec![self.if_true.block, self.if_false.block]
     }
 }
@@ -143,6 +151,7 @@ impl IRDisplay for Branch {
         R: Resolver,
     {
         ctx.text("branch")
+            .append(ctx.space())
             .append(self.cond.display(ctx))
             .append(ctx.text(","))
             .append(ctx.space())

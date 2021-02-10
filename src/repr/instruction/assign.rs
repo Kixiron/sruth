@@ -80,6 +80,6 @@ impl IRDisplay for VarId {
         A: Clone + 'a,
         R: Resolver,
     {
-        ctx.text(format!("%{}", self.0))
+        ctx.text(format!("_{}", self.0))
     }
 }

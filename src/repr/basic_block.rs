@@ -76,7 +76,7 @@ impl IRDisplay for BasicBlockId {
         A: Clone + 'a,
         R: Resolver,
     {
-        ctx.text(format!("%block.{}", self.0))
+        ctx.text(format!("block.{}", self.0))
     }
 }
 

@@ -4,50 +4,6 @@ use timely::{
     Data,
 };
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct AppendOnlyVec<T>(Vec<T>);
-
-impl<T> AppendOnlyVec<T> {
-    #[inline]
-    pub const fn new() -> Self {
-        Self(Vec::new())
-    }
-
-    #[inline]
-    pub fn push(&mut self, value: T) {
-        self.0.push(value)
-    }
-
-    #[inline]
-    pub fn append(&mut self, other: &mut Vec<T>) {
-        self.0.append(other)
-    }
-
-    #[inline]
-    pub fn reserve(&mut self, additional: usize) {
-        self.0.reserve(additional)
-    }
-
-    #[inline]
-    pub fn reserve_exact(&mut self, additional: usize) {
-        self.0.reserve_exact(additional)
-    }
-}
-
-impl<'a, T: 'a + Copy> Extend<&'a T> for AppendOnlyVec<T> {
-    #[inline]
-    fn extend<I: IntoIterator<Item = &'a T>>(&mut self, iter: I) {
-        self.0.extend(iter)
-    }
-}
-
-impl<T> Extend<T> for AppendOnlyVec<T> {
-    #[inline]
-    fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
-        self.0.extend(iter)
-    }
-}
-
 pub trait BufferedFlatMap<D, D2> {
     type Output;
 
@@ -123,5 +79,49 @@ where
                 )
             })
             .as_collection()
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct AppendOnlyVec<T>(Vec<T>);
+
+impl<T> AppendOnlyVec<T> {
+    #[inline]
+    pub const fn new() -> Self {
+        Self(Vec::new())
+    }
+
+    #[inline]
+    pub fn push(&mut self, value: T) {
+        self.0.push(value)
+    }
+
+    #[inline]
+    pub fn append(&mut self, other: &mut Vec<T>) {
+        self.0.append(other)
+    }
+
+    #[inline]
+    pub fn reserve(&mut self, additional: usize) {
+        self.0.reserve(additional)
+    }
+
+    #[inline]
+    pub fn reserve_exact(&mut self, additional: usize) {
+        self.0.reserve_exact(additional)
+    }
+}
+
+impl<'a, T: 'a + Copy> Extend<&'a T> for AppendOnlyVec<T> {
+    #[inline]
+    fn extend<I: IntoIterator<Item = &'a T>>(&mut self, iter: I) {
+        self.0.extend(iter)
+    }
+}
+
+impl<T> Extend<T> for AppendOnlyVec<T> {
+    #[inline]
+    fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
+        self.0.extend(iter)
     }
 }

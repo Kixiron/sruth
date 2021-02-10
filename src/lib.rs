@@ -273,66 +273,85 @@ mod tests {
                     (instructions, terminators)
                 });
 
-            let (mut instructions, mut basic_blocks) =
-                worker.dataflow_named("cull dead code", |scope| {
-                    let (instructions, terminators) = (
-                        instructions.import_named(scope, "instructions (post constant folding)"),
-                        terminators.import_named(scope, "terminators (post constant folding)"),
-                    );
+            let (
+                mut instructions,
+                mut basic_blocks,
+                mut instructions_for_blocks,
+                mut terminators,
+                mut function_meta,
+            ) = worker.dataflow_named("cull dead code", |scope| {
+                let (instructions, terminators) = (
+                    instructions.import_named(scope, "instructions (post constant folding)"),
+                    terminators.import_named(scope, "terminators (post constant folding)"),
+                );
 
-                    let (instructions, basic_blocks) =
-                        optimize::dead_code(scope, &mut input_manager, &instructions, &terminators);
+                let (
+                    instructions,
+                    basic_blocks,
+                    instructions_for_blocks,
+                    terminators,
+                    function_meta,
+                ) = optimize::dead_code(scope, &mut input_manager, &instructions, &terminators);
 
-                    let instructions = instructions
-                        .consolidate()
-                        .probe_with(&mut probe)
-                        .arrange_by_key();
-                    let basic_blocks = basic_blocks
-                        .consolidate()
-                        .probe_with(&mut probe)
-                        .arrange_by_key();
+                let instructions = instructions
+                    .consolidate()
+                    .probe_with(&mut probe)
+                    .arrange_by_key();
+                let basic_blocks = basic_blocks
+                    .consolidate()
+                    .probe_with(&mut probe)
+                    .arrange_by_key();
+                let instructions_for_blocks = instructions_for_blocks
+                    .consolidate()
+                    .probe_with(&mut probe)
+                    .arrange_by_key();
+                let terminators = terminators
+                    .consolidate()
+                    .probe_with(&mut probe)
+                    .arrange_by_key();
+                let function_meta = function_meta
+                    .consolidate()
+                    .probe_with(&mut probe)
+                    .arrange_by_key();
 
-                    (instructions.trace, basic_blocks.trace)
-                });
+                (
+                    instructions.trace,
+                    basic_blocks.trace,
+                    instructions_for_blocks.trace,
+                    terminators.trace,
+                    function_meta.trace,
+                )
+            });
 
             worker.dataflow_named("reconstruct ir", |scope| {
-                let (instructions, terminators, basic_blocks, block_trace) = (
+                let (
+                    instructions,
+                    terminators,
+                    basic_blocks,
+                    instructions_for_blocks,
+                    function_meta,
+                ) = (
                     instructions.import(scope),
                     terminators.import(scope),
                     basic_blocks.import(scope),
-                    input_manager.basic_block_trace.import(scope),
+                    instructions_for_blocks.import(scope),
+                    function_meta.import(scope),
                 );
 
-                let live_blocks = basic_blocks.as_collection(|_func, &block| block);
-                let live_basic_blocks =
-                    block_trace
-                        .semijoin(&live_blocks)
-                        .flat_map(|(block_id, meta)| {
-                            meta.instructions
-                                .into_iter()
-                                .enumerate()
-                                .map(move |(idx, inst)| (inst, (block_id, idx)))
-                        });
-
-                let mut basic_blocks = live_basic_blocks
-                    .join_core(&instructions, |_inst, &(block, inst_idx), inst| {
-                        iter::once((block, (inst.to_owned(), inst_idx)))
+                let mut rebuilt_basic_blocks = instructions_for_blocks
+                    .as_collection(|&block, &inst| (inst, block))
+                    .join_core(&instructions, |_inst_id, &block, inst| {
+                        iter::once((block, inst.to_owned()))
                     })
                     .reduce(|_, input, output| {
-                        let mut instructions: Vec<_> = input
+                        // TODO: Ordering of instructions???
+                        let instructions: Vec<_> = input
                             .iter()
                             .copied()
-                            .map(|((inst, idx), _diff)| (inst.clone(), idx))
+                            .map(|(inst, _diff)| inst.clone())
                             .collect();
-                        instructions.sort_unstable_by_key(|&(_, idx)| idx);
 
-                        output.push((
-                            instructions
-                                .into_iter()
-                                .map(|(inst, _idx)| inst)
-                                .collect::<Vec<_>>(),
-                            1,
-                        ));
+                        output.push((instructions, 1));
                     })
                     .join_core(&terminators, |&block_id, instructions, term| {
                         iter::once((
@@ -347,23 +366,18 @@ mod tests {
                         ))
                     });
 
-                let terminated_blocks = terminators.semijoin(
-                    &block_trace
-                        .as_collection(|&block_id, _| block_id)
-                        .distinct_core::<Diff>(),
-                );
-
-                // Add back in the blocks which have no instructions
-                basic_blocks = basic_blocks.concat(
-                    &terminated_blocks
-                        .antijoin(&basic_blocks.map(|(block_id, _)| block_id))
-                        .map(|(block_id, terminator)| {
+                // Add back basic blocks with no instructions since they still have terminators
+                rebuilt_basic_blocks = rebuilt_basic_blocks.concat(
+                    &terminators
+                        .as_collection(|&block, term| (block, term.clone()))
+                        .antijoin(&rebuilt_basic_blocks.map(|(block, _)| block))
+                        .map(|(block, terminator)| {
                             (
-                                block_id,
+                                block,
                                 BasicBlock {
                                     // TODO: Retain this info
                                     name: None,
-                                    id: block_id,
+                                    id: block,
                                     instructions: Vec::new(),
                                     terminator,
                                 },
@@ -371,41 +385,35 @@ mod tests {
                         }),
                 );
 
-                let functions = input_manager
-                    .function_trace
-                    .import(scope)
-                    .flat_map_ref(|&func_id, meta| {
-                        let meta = meta.clone();
-                        meta.basic_blocks
-                            .clone()
-                            .into_iter()
-                            .map(move |block| (block, (func_id, meta.clone())))
-                    })
-                    .join_core(
-                        &basic_blocks.arrange_by_key(),
-                        |&block_id, &(func_id, ref meta), instructions| {
-                            iter::once(((func_id, meta.clone()), (block_id, instructions.clone())))
-                        },
+                let basic_blocks = rebuilt_basic_blocks
+                    .join_map(
+                        &basic_blocks.as_collection(|&func, &block| (block, func)),
+                        |_block_id, block, &func| (func, block.clone()),
                     )
-                    .reduce(|&(func_id, ref meta), input, output| {
-                        let basic_blocks: Vec<_> = input
+                    .consolidate()
+                    .reduce(|_func, blocks, output| {
+                        let blocks: Vec<_> = blocks
                             .iter()
                             .copied()
-                            .map(|((_, instructions), _diff)| instructions.to_owned())
+                            .map(|(block, _)| block.to_owned())
                             .collect();
 
-                        output.push((
-                            Function {
-                                name: meta.name,
-                                id: func_id,
-                                params: meta.params.clone(),
-                                entry: meta.entry,
-                                basic_blocks,
-                            },
-                            1,
-                        ));
+                        output.push((blocks, 1));
+                    });
+
+                let functions = function_meta
+                    .as_collection(|&func_id, meta| (func_id, meta.clone()))
+                    .join_map(&basic_blocks, |&func_id, meta, blocks| {
+                        let func = Function {
+                            name: meta.name,
+                            id: func_id,
+                            params: meta.params.clone(),
+                            entry: meta.entry,
+                            basic_blocks: blocks.clone(),
+                        };
+
+                        (func_id, func)
                     })
-                    .map(|((id, _meta), func)| (id, func))
                     .probe_with(&mut probe);
 
                 trace_manager.insert_trace(

@@ -25,6 +25,11 @@ use timely::dataflow::Scope;
 
 // TODO: Every path is terminated
 // TODO: Check function param types
+// TODO: Check entry blocks exist
+// TODO: Check that all blocks mentioned in `FunctionMeta`s
+//       actually exist
+// TODO: Check that all instructions mentioned in `BasicBlockMeta`s
+//       actually exist
 
 pub fn verify<S, R>(
     scope: &mut S,
@@ -59,7 +64,7 @@ where
     let block_ids = basic_blocks.map(|(block, _)| block);
     let targeted_blocks = basic_blocks.flat_map(|(block, meta)| {
         meta.terminator
-            .succ()
+            .jump_targets()
             .into_iter()
             .map(move |target| (target, block))
     });
