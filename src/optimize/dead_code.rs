@@ -162,10 +162,14 @@ where
 
         // Rewrite the `InstId` -> `BasicBlockId` collection that previously
         // was associated with `to` to point to `from` as their parent block
-        let rewritten_basic_blocks = basic_blocks.map(|(inst, block)| (block, inst)).join_map(
-            &single_unconditional_jumps.map(|(from, to)| (to, from)),
-            |_to, &inst_id, &from| (inst_id, from),
-        );
+        let rewritten_basic_blocks = basic_blocks
+            .map(|(inst, block)| (block, inst))
+            .join_map(&single_unconditional_jumps, |_from, &inst_id, &to| {
+                (inst_id, to)
+            })
+            .inspect(|((inst, new_block), _, _)| {
+                tracing::trace!("moved {:?} to {:?}", inst, new_block);
+            });
 
         // Remove the old `to` basic block instructions and introduce the rewritten ones
         let basic_blocks = basic_blocks
@@ -192,7 +196,10 @@ where
 
                     (func, meta)
                 },
-            );
+            )
+            .inspect(|((func, meta), _, _)| {
+                tracing::trace!("changed {:?}'s entry block to {:?}", func, meta.entry);
+            });
 
         let function_meta = function_meta
             .as_collection(|&func, meta| (func, meta.clone()))
@@ -250,7 +257,7 @@ where
 
         let used_variables = basic_blocks
             .join_core(&instructions, |_inst_id, &block_id, inst| {
-                inst.used_vars().map(move |var| (block_id, var))
+                inst.used_vars().into_iter().map(move |var| (block_id, var))
             })
             .concat(
                 &terminators
@@ -268,7 +275,7 @@ where
         let unused_vars = declared_variables
             .antijoin(&used_variables)
             .map(|((_block_id, _dest), inst_id)| inst_id)
-            .inspect(|(inst, _, _)| tracing::trace!("removing unused assign {:?}", inst));
+            .inspect(|(inst, _, _)| tracing::trace!("removing unused assign to {:?}", inst));
 
         instructions
             .as_collection(|&id, inst| (id, inst.clone()))

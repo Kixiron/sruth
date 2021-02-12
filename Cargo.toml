@@ -6,6 +6,10 @@ authors = ["Chase Wilson <me@chasewilson.dev>"]
 license = "MIT OR Apache-2.0"
 edition = "2018"
 
+[features]
+default = ["wasm"]
+wasm = []
+
 [dependencies]
 fxhash = "0.2.1"
 abomonation = "0.7.3"

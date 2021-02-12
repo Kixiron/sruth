@@ -1,5 +1,6 @@
 mod arrange;
 mod buffered_flat_map;
+mod cleanup;
 mod collect;
 mod count_ext;
 mod distinct;
@@ -11,6 +12,7 @@ mod split;
 
 pub use arrange::{ArrangeByKeyExt, ArrangeBySelfExt};
 pub use buffered_flat_map::BufferedFlatMap;
+pub use cleanup::{Cleanup, ProgramContents};
 pub use collect::{
     CollectCastable, CollectDeclarations, CollectUsages, CollectValues, CollectVariableTypes,
 };

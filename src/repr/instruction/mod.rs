@@ -1,10 +1,16 @@
 mod assign;
 mod binary_ops;
 mod bitcast;
+mod call;
+mod cmp;
+mod neg;
 
 pub use assign::{Assign, VarId};
 pub use binary_ops::{Add, BinaryOp, BinopExt, Div, Mul, Sub};
 pub use bitcast::Bitcast;
+pub use call::Call;
+pub use cmp::Cmp;
+pub use neg::Neg;
 
 use crate::repr::{
     utils::{DisplayCtx, IRDisplay, InstructionExt, RawCast},
@@ -25,6 +31,7 @@ pub enum Instruction {
     Bitcast(Bitcast),
     Neg(Neg),
     Cmp(Cmp),
+    Call(Call),
 }
 
 impl Instruction {
@@ -37,16 +44,62 @@ impl Instruction {
     }
 
     // TODO: Make this a method on InstructionExt
-    pub fn used_vars(&self) -> impl Iterator<Item = VarId> {
+    pub fn used_vars(&self) -> Vec<VarId> {
         match self {
-            Self::Assign(assign) => assign.value.as_var().into_iter().chain(None),
-            Self::Add(add) => add.lhs.as_var().into_iter().chain(add.rhs.as_var()),
-            Self::Sub(sub) => sub.lhs.as_var().into_iter().chain(sub.rhs.as_var()),
-            Self::Mul(mul) => mul.lhs.as_var().into_iter().chain(mul.rhs.as_var()),
-            Self::Div(div) => div.lhs.as_var().into_iter().chain(div.rhs.as_var()),
-            Self::Bitcast(bitcast) => Some(bitcast.source).into_iter().chain(None),
-            Self::Neg(neg) => neg.value.as_var().into_iter().chain(None),
-            Self::Cmp(cmp) => cmp.lhs.as_var().into_iter().chain(cmp.rhs.as_var()),
+            Self::Assign(assign) => {
+                if let Some(val) = assign.value.as_var() {
+                    vec![val]
+                } else {
+                    Vec::new()
+                }
+            }
+
+            Self::Add(add) => add
+                .lhs
+                .as_var()
+                .into_iter()
+                .chain(add.rhs.as_var())
+                .collect(),
+
+            Self::Sub(sub) => sub
+                .lhs
+                .as_var()
+                .into_iter()
+                .chain(sub.rhs.as_var())
+                .collect(),
+
+            Self::Mul(mul) => mul
+                .lhs
+                .as_var()
+                .into_iter()
+                .chain(mul.rhs.as_var())
+                .collect(),
+
+            Self::Div(div) => div
+                .lhs
+                .as_var()
+                .into_iter()
+                .chain(div.rhs.as_var())
+                .collect(),
+
+            Self::Bitcast(bitcast) => vec![bitcast.source],
+
+            Self::Neg(neg) => {
+                if let Some(val) = neg.value.as_var() {
+                    vec![val]
+                } else {
+                    Vec::new()
+                }
+            }
+
+            Self::Cmp(cmp) => cmp
+                .lhs
+                .as_var()
+                .into_iter()
+                .chain(cmp.rhs.as_var())
+                .collect(),
+
+            Self::Call(call) => call.used_vars(),
         }
     }
 
@@ -62,6 +115,7 @@ impl Instruction {
             Self::Bitcast(_) => Vec::new(),
             Self::Neg(neg) => vec![neg.value.clone()],
             Self::Cmp(cmp) => vec![cmp.lhs.clone(), cmp.rhs.clone()],
+            Self::Call(call) => call.used_values(),
         }
         .into_iter()
     }
@@ -153,132 +207,5 @@ impl_instruction! {
     Bitcast,
     Neg,
     Cmp,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
-pub struct Neg {
-    pub value: Value,
-    pub dest: VarId,
-}
-
-impl Neg {
-    pub const fn new(dest: VarId, value: Value) -> Self {
-        Self { value, dest }
-    }
-
-    // TODO: Make this a method on InstructionExt
-    pub const fn is_const(&self) -> bool {
-        self.value.is_const()
-    }
-
-    pub fn replace_uses(&mut self, from: VarId, to: VarId) -> bool {
-        if let Some(var) = self.value.as_var_mut() {
-            if *var == from {
-                *var = to;
-                return true;
-            }
-        }
-
-        false
-    }
-}
-
-impl InstructionExt for Neg {
-    fn dest(&self) -> VarId {
-        self.dest
-    }
-
-    fn dest_type(&self) -> Type {
-        self.value.ty.clone()
-    }
-}
-
-impl IRDisplay for Neg {
-    fn display<'a, D, A, R>(&self, ctx: DisplayCtx<'a, D, A, R>) -> DocBuilder<'a, D, A>
-    where
-        D: DocAllocator<'a, A>,
-        D::Doc: Clone,
-        A: Clone + 'a,
-        R: Resolver,
-    {
-        self.dest
-            .display(ctx)
-            .append(ctx.space())
-            .append(ctx.text(":="))
-            .append(ctx.space())
-            .append(ctx.text("neg"))
-            .append(ctx.space())
-            .append(self.value.display(ctx))
-            .group()
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
-pub struct Cmp {
-    pub lhs: Value,
-    pub rhs: Value,
-    pub dest: VarId,
-}
-
-impl Cmp {
-    pub const fn new(lhs: Value, rhs: Value, dest: VarId) -> Self {
-        Self { lhs, rhs, dest }
-    }
-
-    pub const fn is_const(&self) -> bool {
-        self.rhs.is_const() && self.lhs.is_const()
-    }
-
-    pub fn replace_uses(&mut self, from: VarId, to: VarId) -> bool {
-        let mut replaced = false;
-
-        if let Some(var) = self.lhs.as_var_mut() {
-            if *var == from {
-                *var = to;
-                replaced = true
-            }
-        }
-
-        if let Some(var) = self.rhs.as_var_mut() {
-            if *var == from {
-                *var = to;
-                replaced = true
-            }
-        }
-
-        replaced
-    }
-}
-
-impl InstructionExt for Cmp {
-    fn dest(&self) -> VarId {
-        self.dest
-    }
-
-    fn dest_type(&self) -> Type {
-        Type::Bool
-    }
-}
-
-impl IRDisplay for Cmp {
-    fn display<'a, D, A, R>(&self, ctx: DisplayCtx<'a, D, A, R>) -> DocBuilder<'a, D, A>
-    where
-        D: DocAllocator<'a, A>,
-        D::Doc: Clone,
-        A: Clone + 'a,
-        R: Resolver,
-    {
-        self.dest
-            .display(ctx)
-            .append(ctx.space())
-            .append(ctx.text(":="))
-            .append(ctx.space())
-            .append(ctx.text("cmp"))
-            .append(ctx.space())
-            .append(self.lhs.display(ctx))
-            .append(ctx.text(","))
-            .append(ctx.space())
-            .append(self.rhs.display(ctx))
-            .group()
-    }
+    Call,
 }

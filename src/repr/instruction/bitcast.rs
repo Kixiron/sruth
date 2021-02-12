@@ -28,17 +28,18 @@ impl Bitcast {
     }
 
     pub fn is_valid(&self) -> bool {
-        match (&self.dest_ty, &self.source_ty) {
+        matches!(
+            (&self.dest_ty, &self.source_ty),
             (Type::Int, Type::Int)
-            | (Type::Int, Type::Uint)
-            | (Type::Uint, Type::Int)
-            | (Type::Uint, Type::Uint)
-            | (Type::Int, Type::Bool)
-            | (Type::Uint, Type::Bool)
-            | (Type::Bool, Type::Int)
-            | (Type::Bool, Type::Uint)
-            | (Type::Bool, Type::Bool) => true,
-        }
+                | (Type::Int, Type::Uint)
+                | (Type::Uint, Type::Int)
+                | (Type::Uint, Type::Uint)
+                | (Type::Int, Type::Bool)
+                | (Type::Uint, Type::Bool)
+                | (Type::Bool, Type::Int)
+                | (Type::Bool, Type::Uint)
+                | (Type::Bool, Type::Bool)
+        )
     }
 
     pub fn is_redundant(&self) -> bool {

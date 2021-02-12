@@ -26,7 +26,7 @@ where
             let stream = self.enter_region(region);
 
             stream
-                .flat_map(|(id, inst)| inst.used_vars().map(move |var| (var, id)))
+                .flat_map(|(id, inst)| inst.used_vars().into_iter().map(move |var| (var, id)))
                 .leave_region()
         })
     }

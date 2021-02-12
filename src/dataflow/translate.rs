@@ -34,6 +34,7 @@ where
             function.name,
             function.id,
             function.params,
+            function.ret_ty,
             function.entry,
             function.basic_blocks.iter().map(|block| block.id).collect(),
         );

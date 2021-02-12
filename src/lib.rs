@@ -1,21 +1,23 @@
+pub mod builder;
 pub mod dataflow;
 pub mod optimize;
 pub mod repr;
 pub mod verify;
+pub mod wasm;
 
 #[cfg(test)]
 mod tests {
     use crate::{
         dataflow::{
             self,
-            operators::{CrossbeamExtractor, CrossbeamPusher},
+            operators::{Cleanup, CrossbeamExtractor, CrossbeamPusher, ProgramContents},
             Diff, Time, TraceManager,
         },
         optimize,
         repr::{
             basic_block::BasicBlockMeta,
-            instruction::{Add, Assign, Div, Mul, Sub},
-            terminator::{Branch, Label},
+            instruction::{Add, Assign, Call, Div, Mul, Sub},
+            terminator::{Branch, Label, Return},
             utils::{DisplayCtx, IRDisplay},
             BasicBlock, BasicBlockId, Constant, FuncId, Function, Instruction, Terminator, Type,
             Value, ValueKind, VarId,
@@ -60,12 +62,21 @@ mod tests {
             name: None,
             id: FuncId::new(NonZeroU64::new(1).unwrap()),
             params: vec![(VarId::new(NonZeroU64::new(13).unwrap()), Type::Uint)],
+            ret_ty: Type::Uint,
             entry: BasicBlockId::new(NonZeroU64::new(1).unwrap()),
             basic_blocks: vec![
                 BasicBlock {
                     name: None,
                     id: BasicBlockId::new(NonZeroU64::new(1).unwrap()),
-                    instructions: vec![],
+                    instructions: vec![Instruction::Call(Call {
+                        func: FuncId::new(NonZeroU64::new(1).unwrap()),
+                        args: vec![Value::new(
+                            ValueKind::Const(Constant::Uint(100)),
+                            Type::Uint,
+                        )],
+                        dest: VarId::new(NonZeroU64::new(20).unwrap()),
+                        ret_ty: Type::Uint,
+                    })],
                     terminator: Terminator::Branch(Branch::new(
                         Constant::Bool(true).into(),
                         Label::new(BasicBlockId::new(NonZeroU64::new(2).unwrap())),
@@ -144,11 +155,22 @@ mod tests {
                             rhs: Value::new(ValueKind::Const(Constant::Uint(0)), Type::Uint),
                             dest: VarId::new(NonZeroU64::new(14).unwrap()),
                         }),
+                        Instruction::Call(Call {
+                            func: FuncId::new(NonZeroU64::new(1).unwrap()),
+                            args: vec![Value::new(
+                                ValueKind::Const(Constant::Uint(200)),
+                                Type::Uint,
+                            )],
+                            dest: VarId::new(NonZeroU64::new(22).unwrap()),
+                            ret_ty: Type::Uint,
+                        }),
                     ],
-                    terminator: Terminator::Return(Some(Value::new(
-                        ValueKind::Var(VarId::new(NonZeroU64::new(14).unwrap())),
-                        Type::Uint,
-                    ))),
+                    terminator: Terminator::Return(Return {
+                        value: Some(Value::new(
+                            ValueKind::Var(VarId::new(NonZeroU64::new(22).unwrap())),
+                            Type::Uint,
+                        )),
+                    }),
                 },
             ],
         }];
@@ -287,29 +309,43 @@ mod tests {
 
                 let (
                     instructions,
-                    basic_blocks,
-                    instructions_for_blocks,
-                    terminators,
-                    function_meta,
+                    function_blocks,
+                    block_instructions,
+                    block_terminators,
+                    function_descriptors,
                 ) = optimize::dead_code(scope, &mut input_manager, &instructions, &terminators);
 
-                let instructions = instructions
+                let program = ProgramContents::new(
+                    instructions,
+                    block_instructions.map(|(block, inst)| (inst, block)),
+                    block_terminators,
+                    function_blocks.map(|(func, block)| (block, func)),
+                    function_descriptors,
+                )
+                .cleanup();
+
+                let instructions = program
+                    .instructions
                     .consolidate()
                     .probe_with(&mut probe)
                     .arrange_by_key();
-                let basic_blocks = basic_blocks
+                let basic_blocks = program
+                    .function_blocks
                     .consolidate()
                     .probe_with(&mut probe)
                     .arrange_by_key();
-                let instructions_for_blocks = instructions_for_blocks
+                let instructions_for_blocks = program
+                    .block_instructions
                     .consolidate()
                     .probe_with(&mut probe)
                     .arrange_by_key();
-                let terminators = terminators
+                let terminators = program
+                    .block_terminators
                     .consolidate()
                     .probe_with(&mut probe)
                     .arrange_by_key();
-                let function_meta = function_meta
+                let function_meta = program
+                    .function_descriptors
                     .consolidate()
                     .probe_with(&mut probe)
                     .arrange_by_key();
@@ -339,7 +375,6 @@ mod tests {
                 );
 
                 let mut rebuilt_basic_blocks = instructions_for_blocks
-                    .as_collection(|&block, &inst| (inst, block))
                     .join_core(&instructions, |_inst_id, &block, inst| {
                         iter::once((block, inst.to_owned()))
                     })
@@ -386,10 +421,9 @@ mod tests {
                 );
 
                 let basic_blocks = rebuilt_basic_blocks
-                    .join_map(
-                        &basic_blocks.as_collection(|&func, &block| (block, func)),
-                        |_block_id, block, &func| (func, block.clone()),
-                    )
+                    .join_core(&basic_blocks, |_block_id, block, &func| {
+                        iter::once((func, block.clone()))
+                    })
                     .consolidate()
                     .reduce(|_func, blocks, output| {
                         let blocks: Vec<_> = blocks
@@ -408,6 +442,7 @@ mod tests {
                             name: meta.name,
                             id: func_id,
                             params: meta.params.clone(),
+                            ret_ty: meta.ret_ty.clone(),
                             entry: meta.entry,
                             basic_blocks: blocks.clone(),
                         };

@@ -11,6 +11,7 @@ pub struct Function {
     pub id: FuncId,
     // TODO: Struct param
     pub params: Vec<(VarId, Type)>,
+    pub ret_ty: Type,
     pub entry: BasicBlockId,
     pub basic_blocks: Vec<BasicBlock>,
 }
@@ -48,6 +49,14 @@ impl IRDisplay for Function {
                 .parens(),
             )
             .append(ctx.space())
+            .append(if self.ret_ty == Type::Unit {
+                ctx.nil()
+            } else {
+                ctx.text("->")
+                    .append(ctx.space())
+                    .append(self.ret_ty.display(ctx))
+                    .append(ctx.space())
+            })
             .append(ctx.text("{"))
             .group()
             .append(
@@ -123,6 +132,7 @@ pub struct FunctionMeta {
     pub name: Option<Ident>,
     pub id: FuncId,
     pub params: Vec<(VarId, Type)>,
+    pub ret_ty: Type,
     pub entry: BasicBlockId,
     pub basic_blocks: Vec<BasicBlockId>,
 }
@@ -132,6 +142,7 @@ impl FunctionMeta {
         name: Option<Ident>,
         id: FuncId,
         params: Vec<(VarId, Type)>,
+        ret_ty: Type,
         entry: BasicBlockId,
         basic_blocks: Vec<BasicBlockId>,
     ) -> Self {
@@ -139,6 +150,7 @@ impl FunctionMeta {
             name,
             id,
             params,
+            ret_ty,
             entry,
             basic_blocks,
         }

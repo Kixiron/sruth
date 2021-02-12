@@ -8,6 +8,7 @@ pub enum Type {
     Int,
     Uint,
     Bool,
+    Unit,
 }
 
 impl IRDisplay for Type {
@@ -22,6 +23,7 @@ impl IRDisplay for Type {
             Self::Int => ctx.text("int"),
             Self::Uint => ctx.text("uint"),
             Self::Bool => ctx.text("bool"),
+            Self::Unit => ctx.text("unit"),
         }
     }
 }

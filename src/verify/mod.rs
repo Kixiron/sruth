@@ -30,6 +30,7 @@ use timely::dataflow::Scope;
 //       actually exist
 // TODO: Check that all instructions mentioned in `BasicBlockMeta`s
 //       actually exist
+// TODO: Check all called functions exist
 
 pub fn verify<S, R>(
     scope: &mut S,

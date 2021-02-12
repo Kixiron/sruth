@@ -1,6 +1,6 @@
 use crate::repr::{
     instruction::VarId,
-    utils::{DisplayCtx, IRDisplay},
+    utils::{DisplayCtx, IRDisplay, RawCast},
     value::Value,
     BasicBlockId,
 };
@@ -13,14 +13,14 @@ pub enum Terminator {
     // TODO: Make this hold a label & a dedicated `Jump` struct
     Jump(BasicBlockId),
     // TODO: Make a `Return` struct
-    Return(Option<Value>),
+    Return(Return),
     Branch(Branch),
     Unreachable,
 }
 
 impl Terminator {
     // TODO: Make a `Return` struct
-    pub const fn into_return(self) -> Option<Option<Value>> {
+    pub const fn into_return(self) -> Option<Return> {
         if let Self::Return(ret) = self {
             Some(ret)
         } else {
@@ -48,13 +48,7 @@ impl Terminator {
         match self {
             Self::Jump(_) => Vec::new(),
             Self::Branch(branch) => branch.used_vars(),
-            Self::Return(ret) => {
-                if let Some(val) = ret.as_ref().and_then(Value::as_var) {
-                    vec![val]
-                } else {
-                    Vec::new()
-                }
-            }
+            Self::Return(ret) => ret.used_vars(),
             Self::Unreachable => Vec::new(),
         }
     }
@@ -68,16 +62,11 @@ impl Terminator {
     }
 
     pub fn replace_uses(&mut self, from: VarId, to: VarId) -> bool {
-        if let Self::Return(Some(value)) = self {
-            if let Some(var) = value.as_var_mut() {
-                if *var == from {
-                    *var = to;
-                    return true;
-                }
-            }
+        match self {
+            Self::Return(ret) => ret.replace_uses(from, to),
+            Self::Branch(branch) => branch.replace_uses(from, to),
+            Self::Jump(_) | Self::Unreachable => false,
         }
-
-        false
     }
 }
 
@@ -96,20 +85,68 @@ impl IRDisplay for Terminator {
                 .append(addr.display(ctx))
                 .group(),
 
-            Self::Return(ret) => ctx
-                .text("ret")
-                .append(
-                    ret.as_ref()
-                        .map(|ret| ctx.space().append(ret.display(ctx)).append(ctx.space()))
-                        .unwrap_or_else(|| ctx.nil()),
-                )
-                .group(),
+            Self::Return(ret) => ret.display(ctx),
 
             Self::Unreachable => ctx.text("unreachable"),
 
             Self::Branch(branch) => branch.display(ctx),
         }
     }
+}
+
+macro_rules! impl_terminator {
+    ($($type:ident),* $(,)?) => {
+        $(
+            impl From<$type> for Terminator {
+                fn from(term: $type) -> Self {
+                    Self::$type(term)
+                }
+            }
+
+            impl RawCast<$type> for Terminator {
+                fn is_raw(&self) -> bool {
+                    matches!(self, Self::$type(_))
+                }
+
+                fn cast_raw(self) -> Option<$type> {
+                    if let Self::$type(value) = self {
+                        Some(value)
+                    } else {
+                        None
+                    }
+                }
+            }
+        )*
+
+        // TODO
+        // impl Terminator {
+        //     pub fn replace_uses(&mut self, from: VarId, to: VarId) -> bool {
+        //         match self {
+        //             $(Self::$type(value) => value.replace_uses(from, to),)*
+        //         }
+        //     }
+        // }
+
+        // TODO
+        // impl IRDisplay for Terminator {
+        //     fn display<'a, D, A, R>(&self, ctx: DisplayCtx<'a, D, A, R>) -> DocBuilder<'a, D, A>
+        //     where
+        //         D: DocAllocator<'a, A>,
+        //         D::Doc: Clone,
+        //         A: Clone + 'a,
+        //         R: Resolver,
+        //     {
+        //         match self {
+        //             $(Self::$type(value) => value.display(ctx),)*
+        //         }
+        //     }
+        // }
+    };
+}
+
+impl_terminator! {
+    Branch,
+    Return,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
@@ -126,6 +163,17 @@ impl Branch {
             if_true,
             if_false,
         }
+    }
+
+    pub fn replace_uses(&mut self, from: VarId, to: VarId) -> bool {
+        if let Some(var) = self.cond.as_var_mut() {
+            if *var == from {
+                *var = to;
+                return true;
+            }
+        }
+
+        false
     }
 
     pub fn used_vars(&self) -> Vec<VarId> {
@@ -183,5 +231,54 @@ impl IRDisplay for Label {
         R: Resolver,
     {
         self.block.display(ctx)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
+pub struct Return {
+    pub value: Option<Value>,
+}
+
+impl Return {
+    pub fn returned_var(&self) -> Option<VarId> {
+        self.value.as_ref().and_then(Value::as_var)
+    }
+
+    pub fn replace_uses(&mut self, from: VarId, to: VarId) -> bool {
+        if let Some(var) = self.value.as_mut().and_then(Value::as_var_mut) {
+            if *var == from {
+                *var = to;
+                return true;
+            }
+        }
+
+        false
+    }
+
+    pub fn used_vars(&self) -> Vec<VarId> {
+        if let Some(val) = self.value.as_ref().and_then(Value::as_var) {
+            vec![val]
+        } else {
+            Vec::new()
+        }
+    }
+}
+
+impl IRDisplay for Return {
+    fn display<'a, D, A, R>(&self, ctx: DisplayCtx<'a, D, A, R>) -> DocBuilder<'a, D, A>
+    where
+        D: DocAllocator<'a, A>,
+        D::Doc: Clone,
+        A: Clone + 'a,
+        R: Resolver,
+    {
+        ctx.text("return")
+            .append(
+                self.value
+                    .as_ref()
+                    .map(|ret| ctx.space().append(ret.display(ctx)).append(ctx.space()))
+                    .unwrap_or_else(|| ctx.nil()),
+            )
+            .group()
     }
 }

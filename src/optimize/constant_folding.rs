@@ -5,6 +5,7 @@ use crate::{
     },
     repr::{
         instruction::{Add, Assign, BinopExt, Div, Mul, Sub},
+        terminator::Return,
         BasicBlockId, Cast, Constant, InstId, Instruction, RawCast, Terminator, Type, Value,
         ValueKind, VarId,
     },
@@ -124,8 +125,8 @@ where
 {
     let returns = terminators.filter_map(|(id, term)| {
         term.into_return()
-            .flatten()
-            .and_then(|term| term.as_var().map(|var| (var, term.ty)))
+            .and_then(|ret| ret.value)
+            .and_then(|val| val.as_var().map(|var| (var, val.ty)))
             .map(|(var, ty)| (var, (id, ty)))
     });
 
@@ -135,10 +136,12 @@ where
 
             (
                 id,
-                Terminator::Return(Some(Value::new(
-                    ValueKind::Const(constant.clone()),
-                    const_ty.clone(),
-                ))),
+                Terminator::Return(Return {
+                    value: Some(Value::new(
+                        ValueKind::Const(constant.clone()),
+                        const_ty.clone(),
+                    )),
+                }),
             )
         });
 
