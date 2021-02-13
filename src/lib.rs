@@ -210,8 +210,8 @@ mod tests {
                 input
             });
 
-            let (mut instructions, mut terminators) =
-                worker.dataflow_named::<Time, _, _>("constant propagation", |scope| {
+            let (mut instructions, mut terminators, mut block_descriptors) = worker
+                .dataflow_named::<Time, _, _>("constant propagation", |scope| {
                     let (instructions, terminators) = (
                         input_manager
                             .instruction_trace
@@ -292,7 +292,11 @@ mod tests {
                         terminators.clone(),
                     );
 
-                    (instructions, terminators)
+                    (
+                        instructions,
+                        terminators,
+                        basic_blocks.arrange_by_key().trace,
+                    )
                 });
 
             let (
@@ -319,6 +323,9 @@ mod tests {
                     instructions,
                     block_instructions.map(|(block, inst)| (inst, block)),
                     block_terminators,
+                    block_descriptors
+                        .import(scope)
+                        .as_collection(|&block, desc| (block, desc.clone())),
                     function_blocks.map(|(func, block)| (block, func)),
                     function_descriptors,
                 )

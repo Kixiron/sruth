@@ -1,12 +1,12 @@
 use super::{CollectCastable, CollectDeclarations, FilterMap};
 use crate::repr::{
-    function::FunctionMeta, instruction::Call, terminator::Return, BasicBlockId, FuncId, InstId,
-    Instruction, Terminator,
+    basic_block::BasicBlockMeta, function::FunctionMeta, instruction::Call, terminator::Return,
+    BasicBlockId, FuncId, InstId, Instruction, Terminator,
 };
 use differential_dataflow::{
     difference::{Abelian, Semigroup},
     lattice::Lattice,
-    operators::{Iterate, Join, Threshold},
+    operators::{Consolidate, Iterate, Join, Reduce, Threshold},
     Collection, ExchangeData,
 };
 use std::ops::Mul;
@@ -23,6 +23,7 @@ where
     pub instructions: Collection<S, (InstId, Instruction), R>,
     pub block_instructions: Collection<S, (InstId, BasicBlockId), R>,
     pub block_terminators: Collection<S, (BasicBlockId, Terminator), R>,
+    pub block_descriptors: Collection<S, (BasicBlockId, BasicBlockMeta), R>,
     pub function_blocks: Collection<S, (BasicBlockId, FuncId), R>,
     pub function_descriptors: Collection<S, (FuncId, FunctionMeta), R>,
 }
@@ -36,6 +37,7 @@ where
         instructions: Collection<S, (InstId, Instruction), R>,
         block_instructions: Collection<S, (InstId, BasicBlockId), R>,
         block_terminators: Collection<S, (BasicBlockId, Terminator), R>,
+        block_descriptors: Collection<S, (BasicBlockId, BasicBlockMeta), R>,
         function_blocks: Collection<S, (BasicBlockId, FuncId), R>,
         function_descriptors: Collection<S, (FuncId, FunctionMeta), R>,
     ) -> Self {
@@ -43,6 +45,7 @@ where
             instructions,
             block_instructions,
             block_terminators,
+            block_descriptors,
             function_blocks,
             function_descriptors,
         }
@@ -56,6 +59,7 @@ where
             instructions: self.instructions.enter(scope),
             block_instructions: self.block_instructions.enter(scope),
             block_terminators: self.block_terminators.enter(scope),
+            block_descriptors: self.block_descriptors.enter(scope),
             function_blocks: self.function_blocks.enter(scope),
             function_descriptors: self.function_descriptors.enter(scope),
         }
@@ -69,6 +73,7 @@ where
             instructions: self.instructions.enter_region(scope),
             block_instructions: self.block_instructions.enter_region(scope),
             block_terminators: self.block_terminators.enter_region(scope),
+            block_descriptors: self.block_descriptors.enter_region(scope),
             function_blocks: self.function_blocks.enter_region(scope),
             function_descriptors: self.function_descriptors.enter_region(scope),
         }
@@ -86,6 +91,7 @@ where
             instructions: self.instructions.leave(),
             block_instructions: self.block_instructions.leave(),
             block_terminators: self.block_terminators.leave(),
+            block_descriptors: self.block_descriptors.leave(),
             function_blocks: self.function_blocks.leave(),
             function_descriptors: self.function_descriptors.leave(),
         }
@@ -102,6 +108,7 @@ where
             instructions: self.instructions.leave_region(),
             block_instructions: self.block_instructions.leave_region(),
             block_terminators: self.block_terminators.leave_region(),
+            block_descriptors: self.block_descriptors.leave_region(),
             function_blocks: self.function_blocks.leave_region(),
             function_descriptors: self.function_descriptors.leave_region(),
         }
@@ -126,7 +133,7 @@ where
         // TODO: Only include reachable return statements
         // TODO: Update `FunctionMeta`s
         // TODO: Update `BasicBlockMeta`s
-        self.instructions.scope().region_named("Cleanup", |region| {
+        let program = self.instructions.scope().region_named("Cleanup", |region| {
             let program = self.enter(region);
 
             // TODO: Filter for reachable returns
@@ -200,14 +207,85 @@ where
                         .distinct_core()
                 });
 
+            let block_instructions = program.block_instructions.semijoin(&required_instructions);
+            let agg_inst = block_instructions
+                .consolidate()
+                .map(|(inst, block)| (block, inst))
+                .reduce(|_, instructions, output| {
+                    let instructions: Vec<_> = instructions.iter().map(|(&id, _)| id).collect();
+                    output.push((instructions, R::from(1)));
+                });
+
+            let block_descriptors = program
+                .block_descriptors
+                .semijoin(&required_blocks)
+                .join_map(&agg_inst, |&id, desc, instructions| {
+                    let mut desc = desc.clone();
+                    desc.instructions = instructions.to_owned();
+
+                    (id, desc)
+                });
+
+            let function_blocks = program.function_blocks.semijoin(&required_blocks);
+            let agg_blocks = function_blocks
+                .consolidate()
+                .map(|(block, func)| (func, block))
+                .reduce(|_, blocks, output| {
+                    let blocks: Vec<_> = blocks.iter().map(|(&id, _)| id).collect();
+                    output.push((blocks, R::from(1)));
+                });
+
+            let function_descriptors = program
+                .function_descriptors
+                .semijoin(&required_functions)
+                .join_map(&agg_blocks, |&id, desc, blocks| {
+                    let mut desc = desc.clone();
+                    desc.basic_blocks = blocks.to_owned();
+
+                    (id, desc)
+                });
+
             ProgramContents {
                 instructions: program.instructions.semijoin(&required_instructions),
-                block_instructions: program.block_instructions.semijoin(&required_instructions),
+                block_instructions,
                 block_terminators: program.block_terminators.semijoin(&required_blocks),
-                function_blocks: program.function_blocks.semijoin(&required_blocks),
-                function_descriptors: program.function_descriptors.semijoin(&required_functions),
+                block_descriptors,
+                function_blocks,
+                function_descriptors,
             }
             .leave_region()
-        })
+        });
+
+        if cfg!(debug_assertions) {
+            self.instructions
+                .join(&self.block_instructions)
+                .antijoin(&program.instructions.map(|(id, _)| id))
+                .inspect(|((inst_id, (inst, block_id)), _, _)| {
+                    tracing::trace!(
+                        inst = ?inst,
+                        "removed instruction {:?} from {:?}",
+                        inst_id,
+                        block_id,
+                    );
+                });
+
+            self.block_terminators
+                .antijoin(&program.block_terminators.map(|(id, _)| id))
+                .inspect(|((block_id, term), _, _)| {
+                    tracing::trace!("removed terminator {:?} from {:?}", term, block_id);
+                });
+
+            self.function_blocks
+                .antijoin(&program.function_blocks.map(|(id, _)| id))
+                .inspect(|((block_id, func_id), _, _)| {
+                    tracing::trace!("removed {:?} from {:?}", block_id, func_id);
+                });
+
+            self.function_descriptors
+                .antijoin(&self.function_descriptors.map(|(id, _)| id))
+                .inspect(|((func_id, _desc), _, _)| tracing::trace!("removed func {:?}", func_id));
+        }
+
+        program
     }
 }
