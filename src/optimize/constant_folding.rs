@@ -13,7 +13,7 @@ use crate::{
 use differential_dataflow::{
     difference::{Monoid, Semigroup},
     lattice::Lattice,
-    operators::{iterate::Variable, Consolidate, Join},
+    operators::{consolidate::ConsolidateStream, iterate::Variable, Consolidate, Join},
     AsCollection, Collection, Data, ExchangeData,
 };
 use std::{
@@ -43,7 +43,7 @@ where
     let span = tracing::debug_span!("constant folding");
     span.in_scope(|| {
         let seed_constants = instructions.filter_map(|(_, inst)| {
-            inst.cast().and_then(|Assign { value, dest }| {
+            inst.cast().and_then(|Assign { value, dest, .. }| {
                 let (value, ty) = value.split();
                 value.into_const().map(|constant| (dest, (constant, ty)))
             })
@@ -145,7 +145,9 @@ where
             )
         });
 
-    let branches = terminators.filter_map(|(id, term)| term.into_branch().map(move |br| (id, br)));
+    let branches = terminators
+        .filter_map(|(id, term)| term.into_branch().map(move |br| (id, br)))
+        .consolidate_stream();
     let (branch_const, branch_vars) =
         branches.filter_split(|(id, br)| match br.cond.value.clone() {
             ValueKind::Const(constant) => (Some((id, (constant, br))), None),

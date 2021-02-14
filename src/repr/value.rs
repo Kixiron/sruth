@@ -1,7 +1,7 @@
 use super::Type;
 use crate::repr::{
     constant::Constant,
-    instruction::VarId,
+    instruction::{TypedVar, VarId},
     utils::{DisplayCtx, IRDisplay},
 };
 use abomonation_derive::Abomonation;
@@ -12,15 +12,6 @@ use pretty::{DocAllocator, DocBuilder};
 pub struct Value {
     pub value: ValueKind,
     pub ty: Type,
-}
-
-impl From<Constant> for Value {
-    fn from(constant: Constant) -> Self {
-        let ty = constant.ty();
-        let value = ValueKind::from(constant);
-
-        Self { value, ty }
-    }
 }
 
 impl Value {
@@ -77,6 +68,24 @@ impl Value {
 
     pub const fn split(self) -> (ValueKind, Type) {
         (self.value, self.ty)
+    }
+}
+
+impl From<Constant> for Value {
+    fn from(constant: Constant) -> Self {
+        let ty = constant.ty();
+        let value = ValueKind::from(constant);
+
+        Self { value, ty }
+    }
+}
+
+impl From<TypedVar> for Value {
+    fn from(TypedVar { var, ty }: TypedVar) -> Self {
+        Self {
+            value: ValueKind::from(var),
+            ty,
+        }
     }
 }
 

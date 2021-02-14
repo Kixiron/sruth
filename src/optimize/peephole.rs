@@ -108,7 +108,7 @@ impl PeepholePass for MulByZero {
                             if is_lhs { "0 * x" } else { "x * 0" },
                         );
 
-                        let assign = Assign::new(mul.dest(), value.map(|_| zero.into()));
+                        let assign = Assign::new(mul.dest(), value.map(|_| zero.into()), None);
                         Instruction::Assign(assign)
                     })
                     .map(|inst| (id, inst))
@@ -151,7 +151,10 @@ impl PeepholePass for SubtractZero {
                             "reduced `x - 0` to `x`",
                         );
 
-                        return Some((id, Instruction::Assign(Assign::new(sub.dest(), sub.lhs()))));
+                        return Some((
+                            id,
+                            Instruction::Assign(Assign::new(sub.dest(), sub.lhs(), None)),
+                        ));
                     }
                 }
 

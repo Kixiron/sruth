@@ -120,7 +120,13 @@ where
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
-pub struct Ident(Spur);
+pub struct Ident(crate Spur);
+
+impl Ident {
+    crate const fn new(spur: Spur) -> Self {
+        Self(spur)
+    }
+}
 
 impl Abomonation for Ident {
     unsafe fn entomb<W: std::io::Write>(&self, write: &mut W) -> std::io::Result<()> {

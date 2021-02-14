@@ -15,6 +15,7 @@ pub struct Add {
 }
 
 impl Add {
+    // TODO: These evaluate functions are terrible
     pub fn evaluate(self) -> Option<Instruction> {
         let (rhs, lhs) = (self.rhs.into_const()?, self.lhs.into_const()?);
 
@@ -22,10 +23,12 @@ impl Add {
             (Constant::Int(lhs), Constant::Int(rhs)) => Some(Instruction::Assign(Assign {
                 value: Value::new(ValueKind::Const(Constant::Int(lhs + rhs)), Type::Int),
                 dest: self.dest,
+                name: None,
             })),
             (Constant::Uint(lhs), Constant::Uint(rhs)) => Some(Instruction::Assign(Assign {
                 value: Value::new(ValueKind::Const(Constant::Uint(lhs + rhs)), Type::Uint),
                 dest: self.dest,
+                name: None,
             })),
 
             (Constant::Bool(_), Constant::Bool(_))
@@ -77,10 +80,12 @@ impl Sub {
             (Constant::Int(lhs), Constant::Int(rhs)) => Some(Instruction::Assign(Assign {
                 value: Value::new(ValueKind::Const(Constant::Int(lhs - rhs)), Type::Int),
                 dest: self.dest,
+                name: None,
             })),
             (Constant::Uint(lhs), Constant::Uint(rhs)) => Some(Instruction::Assign(Assign {
                 value: Value::new(ValueKind::Const(Constant::Uint(lhs - rhs)), Type::Uint),
                 dest: self.dest,
+                name: None,
             })),
 
             (Constant::Bool(_), Constant::Bool(_))
@@ -132,10 +137,12 @@ impl Mul {
             (Constant::Int(lhs), Constant::Int(rhs)) => Some(Instruction::Assign(Assign {
                 value: Value::new(ValueKind::Const(Constant::Int(lhs * rhs)), Type::Int),
                 dest: self.dest,
+                name: None,
             })),
             (Constant::Uint(lhs), Constant::Uint(rhs)) => Some(Instruction::Assign(Assign {
                 value: Value::new(ValueKind::Const(Constant::Uint(lhs * rhs)), Type::Uint),
                 dest: self.dest,
+                name: None,
             })),
 
             (Constant::Bool(_), Constant::Bool(_))
@@ -187,10 +194,12 @@ impl Div {
             (Constant::Int(lhs), Constant::Int(rhs)) => Some(Instruction::Assign(Assign {
                 value: Value::new(ValueKind::Const(Constant::Int(lhs / rhs)), Type::Int),
                 dest: self.dest,
+                name: None,
             })),
             (Constant::Uint(lhs), Constant::Uint(rhs)) => Some(Instruction::Assign(Assign {
                 value: Value::new(ValueKind::Const(Constant::Uint(lhs / rhs)), Type::Uint),
                 dest: self.dest,
+                name: None,
             })),
 
             (Constant::Bool(_), Constant::Bool(_))

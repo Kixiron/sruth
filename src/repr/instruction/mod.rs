@@ -5,7 +5,7 @@ mod call;
 mod cmp;
 mod neg;
 
-pub use assign::{Assign, VarId};
+pub use assign::{Assign, TypedVar, VarId};
 pub use binary_ops::{Add, BinaryOp, BinopExt, Div, Mul, Sub};
 pub use bitcast::Bitcast;
 pub use call::Call;
@@ -21,6 +21,7 @@ use lasso::Resolver;
 use pretty::{DocAllocator, DocBuilder};
 use std::num::NonZeroU64;
 
+// TODO: Make instructions self-describing (Let them carry their own id around somehow)
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
 pub enum Instruction {
     Assign(Assign),
@@ -116,6 +117,22 @@ impl Instruction {
             Self::Neg(neg) => vec![neg.value.clone()],
             Self::Cmp(cmp) => vec![cmp.lhs.clone(), cmp.rhs.clone()],
             Self::Call(call) => call.used_values(),
+        }
+        .into_iter()
+    }
+
+    pub fn used_values_mut(&mut self) -> impl Iterator<Item = &mut Value> {
+        // TODO: Less clones, less allocation
+        match self {
+            Self::Assign(assign) => vec![&mut assign.value],
+            Self::Add(add) => vec![&mut add.lhs, &mut add.rhs],
+            Self::Sub(sub) => vec![&mut sub.lhs, &mut sub.rhs],
+            Self::Mul(mul) => vec![&mut mul.lhs, &mut mul.rhs],
+            Self::Div(div) => vec![&mut div.lhs, &mut div.rhs],
+            Self::Bitcast(_) => Vec::new(),
+            Self::Neg(neg) => vec![&mut neg.value],
+            Self::Cmp(cmp) => vec![&mut cmp.lhs, &mut cmp.rhs],
+            Self::Call(call) => call.used_values_mut(),
         }
         .into_iter()
     }

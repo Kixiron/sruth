@@ -44,6 +44,10 @@ impl Call {
     pub fn used_values(&self) -> Vec<Value> {
         self.args.clone()
     }
+
+    pub fn used_values_mut(&mut self) -> Vec<&mut Value> {
+        self.args.iter_mut().collect()
+    }
 }
 
 impl InstructionExt for Call {
@@ -73,8 +77,11 @@ impl IRDisplay for Call {
             .append(ctx.space())
             .append(self.func.display(ctx))
             .append(
-                ctx.intersperse(self.args.iter().map(|arg| arg.display(ctx)), ctx.text(","))
-                    .parens(),
+                ctx.intersperse(
+                    self.args.iter().map(|arg| arg.display(ctx)),
+                    ctx.text(",").append(ctx.space()),
+                )
+                .parens(),
             )
             .group()
     }

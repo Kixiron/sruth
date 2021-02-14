@@ -26,7 +26,7 @@ impl IRDisplay for Function {
     {
         let name = self
             .name
-            .map(|name| ctx.text("@").append(name.display(ctx)))
+            .map(|name| name.display(ctx))
             .unwrap_or_else(|| self.id.display(ctx));
 
         ctx.text("; entry:")
@@ -39,9 +39,10 @@ impl IRDisplay for Function {
             .append(
                 ctx.intersperse(
                     self.params.iter().map(|(var, ty)| {
-                        ty.display(ctx)
+                        var.display(ctx)
+                            .append(ctx.text(":"))
                             .append(ctx.space())
-                            .append(var.display(ctx))
+                            .append(ty.display(ctx))
                             .group()
                     }),
                     ctx.text(",").append(ctx.space()),

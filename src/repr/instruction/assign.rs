@@ -1,6 +1,6 @@
 use crate::repr::{
     utils::{DisplayCtx, IRDisplay, InstructionExt},
-    Type, Value,
+    Ident, Type, Value,
 };
 use abomonation_derive::Abomonation;
 use lasso::Resolver;
@@ -11,11 +11,12 @@ use std::num::NonZeroU64;
 pub struct Assign {
     pub value: Value,
     pub dest: VarId,
+    pub name: Option<Ident>,
 }
 
 impl Assign {
-    pub const fn new(dest: VarId, value: Value) -> Self {
-        Self { value, dest }
+    pub const fn new(dest: VarId, value: Value, name: Option<Ident>) -> Self {
+        Self { value, dest, name }
     }
 
     pub const fn is_const(&self) -> bool {
@@ -81,5 +82,17 @@ impl IRDisplay for VarId {
         R: Resolver,
     {
         ctx.text(format!("_{}", self.0))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
+pub struct TypedVar {
+    pub var: VarId,
+    pub ty: Type,
+}
+
+impl TypedVar {
+    pub const fn new(var: VarId, ty: Type) -> Self {
+        Self { var, ty }
     }
 }

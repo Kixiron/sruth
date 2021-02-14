@@ -240,6 +240,10 @@ pub struct Return {
 }
 
 impl Return {
+    pub const fn new(value: Option<Value>) -> Self {
+        Self { value }
+    }
+
     pub fn returned_var(&self) -> Option<VarId> {
         self.value.as_ref().and_then(Value::as_var)
     }

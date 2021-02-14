@@ -9,6 +9,13 @@ pub enum Type {
     Uint,
     Bool,
     Unit,
+    Infer,
+}
+
+impl Type {
+    pub const fn is_infer(&self) -> bool {
+        matches!(self, Self::Infer)
+    }
 }
 
 impl IRDisplay for Type {
@@ -24,6 +31,7 @@ impl IRDisplay for Type {
             Self::Uint => ctx.text("uint"),
             Self::Bool => ctx.text("bool"),
             Self::Unit => ctx.text("unit"),
+            Self::Infer => ctx.text("infer"),
         }
     }
 }
