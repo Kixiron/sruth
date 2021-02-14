@@ -13,7 +13,7 @@ pub use cmp::Cmp;
 pub use neg::Neg;
 
 use crate::repr::{
-    utils::{DisplayCtx, IRDisplay, InstructionExt, RawCast},
+    utils::{DisplayCtx, IRDisplay, InstructionExt, InstructionPurity, RawCast, RawRefCast},
     Type, Value,
 };
 use abomonation_derive::Abomonation;
@@ -174,6 +174,16 @@ macro_rules! impl_instruction {
                     }
                 }
             }
+
+            impl RawRefCast<$type> for Instruction {
+                fn cast_raw_ref(&self) -> Option<&$type> {
+                    if let Self::$type(value) = self {
+                        Some(value)
+                    } else {
+                        None
+                    }
+                }
+            }
         )*
 
         impl Instruction {
@@ -195,6 +205,12 @@ macro_rules! impl_instruction {
             fn dest_type(&self) -> Type {
                 match self {
                     $(Self::$type(value) => value.dest_type(),)*
+                }
+            }
+
+            fn purity(&self) -> InstructionPurity {
+                match self {
+                    $(Self::$type(value) => value.purity(),)*
                 }
             }
         }

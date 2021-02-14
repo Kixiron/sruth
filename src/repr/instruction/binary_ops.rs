@@ -1,6 +1,6 @@
 use crate::repr::{
     instruction::{Assign, VarId},
-    utils::{DisplayCtx, IRDisplay, InstructionExt, RawCast},
+    utils::{DisplayCtx, IRDisplay, InstructionExt, InstructionPurity, RawCast},
     Constant, Instruction, Type, Value, ValueKind,
 };
 use abomonation_derive::Abomonation;
@@ -303,6 +303,10 @@ macro_rules! impl_binop {
                 fn dest_type(&self) -> Type {
                     self.lhs().ty.clone()
                 }
+
+                fn purity(&self) -> InstructionPurity {
+                    InstructionPurity::Pure
+                }
             }
         )*
 
@@ -364,6 +368,10 @@ macro_rules! impl_binop {
                 match self {
                     $(Self::$type(op) => op.dest_type(),)*
                 }
+            }
+
+            fn purity(&self) -> InstructionPurity {
+                InstructionPurity::Pure
             }
         }
 

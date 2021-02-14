@@ -1,5 +1,6 @@
 use crate::repr::{instruction::VarId, Type};
 use abomonation::Abomonation;
+use abomonation_derive::Abomonation;
 use lasso::{Resolver, Spur};
 use pretty::{DocAllocator, DocBuilder};
 use std::{marker::PhantomData, num::NonZeroU32, ops::Deref};
@@ -35,10 +36,38 @@ impl<U> Cast for U {
     }
 }
 
+pub trait RawRefCast<T>: RawCast<T> {
+    fn cast_raw_ref(&self) -> Option<&T>;
+}
+
+pub trait CastRef {
+    fn cast_ref<T>(&self) -> Option<&T>
+    where
+        Self: RawRefCast<T>;
+}
+
+impl<U> CastRef for U {
+    fn cast_ref<T>(&self) -> Option<&T>
+    where
+        Self: RawRefCast<T>,
+    {
+        self.cast_raw_ref()
+    }
+}
+
 pub trait InstructionExt: IRDisplay {
     fn dest(&self) -> VarId;
 
     fn dest_type(&self) -> Type;
+
+    fn purity(&self) -> InstructionPurity;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
+pub enum InstructionPurity {
+    Pure,
+    Maybe,
+    Impure,
 }
 
 #[allow(clippy::upper_case_acronyms)]

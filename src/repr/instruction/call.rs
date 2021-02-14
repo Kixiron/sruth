@@ -1,5 +1,5 @@
 use crate::repr::{
-    utils::{DisplayCtx, IRDisplay, InstructionExt},
+    utils::{DisplayCtx, IRDisplay, InstructionExt, InstructionPurity},
     FuncId, Type, Value, VarId,
 };
 use abomonation_derive::Abomonation;
@@ -57,6 +57,11 @@ impl InstructionExt for Call {
 
     fn dest_type(&self) -> Type {
         self.ret_ty.clone()
+    }
+
+    // TODO
+    fn purity(&self) -> InstructionPurity {
+        InstructionPurity::Maybe
     }
 }
 

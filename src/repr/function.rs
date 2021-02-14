@@ -1,5 +1,8 @@
 use super::{utils::IRDisplay, BasicBlockId};
-use crate::repr::{utils::DisplayCtx, BasicBlock, Ident, Type, VarId};
+use crate::{
+    optimize::inline::InlineHeuristics,
+    repr::{utils::DisplayCtx, BasicBlock, Ident, Type, VarId},
+};
 use abomonation_derive::Abomonation;
 use lasso::Resolver;
 use pretty::{DocAllocator, DocBuilder};
@@ -14,6 +17,7 @@ pub struct Function {
     pub ret_ty: Type,
     pub entry: BasicBlockId,
     pub basic_blocks: Vec<BasicBlock>,
+    pub metadata: Metadata,
 }
 
 impl IRDisplay for Function {
@@ -33,6 +37,7 @@ impl IRDisplay for Function {
             .append(ctx.space())
             .append(self.entry.display(ctx))
             .append(ctx.hardline())
+            .append(self.metadata.display(ctx))
             .append(ctx.text("def"))
             .append(ctx.space())
             .append(name)
@@ -99,6 +104,51 @@ impl IRDisplay for Function {
             .append(ctx.hardline())
             .append(ctx.text("}"))
             .append(ctx.hardline())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation, Default)]
+pub struct Metadata {
+    pub inline_heuristics: Option<InlineHeuristics>,
+}
+
+impl Metadata {
+    pub const fn new(inline_heuristics: Option<InlineHeuristics>) -> Self {
+        Self { inline_heuristics }
+    }
+}
+
+impl IRDisplay for Metadata {
+    fn display<'a, D, A, R>(&self, ctx: DisplayCtx<'a, D, A, R>) -> DocBuilder<'a, D, A>
+    where
+        D: DocAllocator<'a, A>,
+        D::Doc: Clone,
+        A: Clone + 'a,
+        R: Resolver,
+    {
+        ctx.nil().append(if let Some(heuristics) = self.inline_heuristics.as_ref() {
+            ctx.text(";")
+                .append(ctx.space())
+                .append(ctx.text(format!(
+                    "stats: {} branches, {} invocations, {} blocks, {} instructions, {} function calls, {}, {}",
+                    heuristics.branches, heuristics.invocations,
+                    heuristics.block_length, heuristics.inst_length,
+                    heuristics.function_calls,
+                    if heuristics.is_pure { "pure" } else { "impure" },
+                    if heuristics.is_recursive { "recursive" } else { "not recursive" },
+                )))
+                .group()
+                .append(ctx.hardline())
+                .append(
+                    ctx.text(";")
+                        .append(ctx.space())
+                        .append(ctx.text(format!("inline cost: {}", heuristics.inline_cost())))
+                        .group()
+                )
+                .append(ctx.hardline())
+        } else {
+            ctx.nil()
+        })
     }
 }
 

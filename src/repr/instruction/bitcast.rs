@@ -1,5 +1,5 @@
 use crate::repr::{
-    utils::{DisplayCtx, IRDisplay},
+    utils::{DisplayCtx, IRDisplay, InstructionPurity},
     InstructionExt, Type, VarId,
 };
 use abomonation_derive::Abomonation;
@@ -63,6 +63,10 @@ impl InstructionExt for Bitcast {
 
     fn dest_type(&self) -> Type {
         self.dest_ty.clone()
+    }
+
+    fn purity(&self) -> InstructionPurity {
+        InstructionPurity::Pure
     }
 }
 

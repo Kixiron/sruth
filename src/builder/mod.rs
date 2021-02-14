@@ -12,8 +12,10 @@ use crate::{
     builder::function::IncompleteFunction,
     dataflow::InputManager,
     repr::{
-        basic_block::BasicBlockMeta, function::FunctionMeta, instruction::Call, BasicBlock, FuncId,
-        Function, Ident, InstId, Instruction, Type,
+        basic_block::BasicBlockMeta,
+        function::{FunctionMeta, Metadata},
+        instruction::Call,
+        BasicBlock, FuncId, Function, Ident, InstId, Instruction, Type,
     },
 };
 use abomonation_derive::Abomonation;
@@ -31,6 +33,7 @@ pub struct Builder {
 }
 
 // Public API
+// TODO: Allocate function
 impl Builder {
     pub fn function<T, F>(&mut self, return_ty: T, build: F) -> BuildResult<FuncId>
     where
@@ -87,6 +90,7 @@ impl Builder {
                     }
                 })
                 .collect(),
+            metadata: Metadata::default(),
         })
     }
 

@@ -23,6 +23,7 @@ pub trait Cleanup {
     fn cull_unreachable_blocks(&self) -> Self;
 }
 
+// TODO: Implement this for `ArrangedProgram`, try to squeeze some perf out of it
 impl<S, R> Cleanup for Program<S, R>
 where
     S: Scope,
@@ -364,8 +365,7 @@ where
                         .map(move |target| (block, target))
                 });
 
-                // Propagate function ids along the intra-block paths, all remaining blocks
-                // are reachable
+                // Propagate function ids along intra-block paths, all remaining blocks are reachable
                 let reachable_blocks = propagate::propagate(&edges, &roots).map(|(block, _)| block);
 
                 let block_instructions = program

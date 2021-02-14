@@ -21,6 +21,7 @@ pub struct FunctionBuilder<'a> {
     finished: bool,
 }
 
+// TODO: Allocate block
 impl<'a> FunctionBuilder<'a> {
     pub fn basic_block<F>(&mut self, build: F) -> BuildResult<BasicBlockId>
     where

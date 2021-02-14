@@ -1,4 +1,5 @@
 mod arrange;
+mod bounded_loop;
 mod buffered_flat_map;
 mod cleanup;
 mod collect;
@@ -13,6 +14,7 @@ mod partition;
 mod split;
 
 pub use arrange::{ArrangeByKeyExt, ArrangeBySelfExt};
+pub use bounded_loop::BoundedLoop;
 pub use buffered_flat_map::BufferedFlatMap;
 pub use cleanup::Cleanup;
 pub use collect::{
