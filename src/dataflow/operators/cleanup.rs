@@ -1,127 +1,29 @@
-use super::{CollectCastable, CollectDeclarations, CountExt, FilterMap};
-use crate::repr::{
-    basic_block::BasicBlockMeta, function::FunctionMeta, instruction::Call, terminator::Return,
-    BasicBlockId, FuncId, InstId, Instruction, Terminator,
+use crate::{
+    dataflow::{
+        operators::{CollectCastable, CollectDeclarations, CountExt, FilterMap},
+        Program,
+    },
+    repr::{function::FunctionMeta, instruction::Call, terminator::Return},
 };
 use differential_dataflow::{
+    algorithms::graphs::propagate,
     difference::{Abelian, Semigroup},
     lattice::Lattice,
     operators::{Consolidate, Iterate, Join, Reduce, Threshold},
-    Collection, ExchangeData,
+    ExchangeData,
 };
 use std::ops::Mul;
-use timely::{
-    dataflow::{scopes::Child, Scope},
-    progress::{timestamp::Refines, Timestamp},
-};
-
-pub struct ProgramContents<S, R>
-where
-    S: Scope,
-    R: Semigroup,
-{
-    pub instructions: Collection<S, (InstId, Instruction), R>,
-    pub block_instructions: Collection<S, (InstId, BasicBlockId), R>,
-    pub block_terminators: Collection<S, (BasicBlockId, Terminator), R>,
-    pub block_descriptors: Collection<S, (BasicBlockId, BasicBlockMeta), R>,
-    pub function_blocks: Collection<S, (BasicBlockId, FuncId), R>,
-    pub function_descriptors: Collection<S, (FuncId, FunctionMeta), R>,
-}
-
-impl<S, R> ProgramContents<S, R>
-where
-    S: Scope,
-    R: Semigroup,
-{
-    pub fn new(
-        instructions: Collection<S, (InstId, Instruction), R>,
-        block_instructions: Collection<S, (InstId, BasicBlockId), R>,
-        block_terminators: Collection<S, (BasicBlockId, Terminator), R>,
-        block_descriptors: Collection<S, (BasicBlockId, BasicBlockMeta), R>,
-        function_blocks: Collection<S, (BasicBlockId, FuncId), R>,
-        function_descriptors: Collection<S, (FuncId, FunctionMeta), R>,
-    ) -> Self {
-        Self {
-            instructions,
-            block_instructions,
-            block_terminators,
-            block_descriptors,
-            function_blocks,
-            function_descriptors,
-        }
-    }
-
-    pub fn enter<'a, T>(&self, scope: &Child<'a, S, T>) -> ProgramContents<Child<'a, S, T>, R>
-    where
-        T: Timestamp + Refines<S::Timestamp>,
-    {
-        ProgramContents {
-            instructions: self.instructions.enter(scope),
-            block_instructions: self.block_instructions.enter(scope),
-            block_terminators: self.block_terminators.enter(scope),
-            block_descriptors: self.block_descriptors.enter(scope),
-            function_blocks: self.function_blocks.enter(scope),
-            function_descriptors: self.function_descriptors.enter(scope),
-        }
-    }
-
-    pub fn enter_region<'a>(
-        &self,
-        scope: &Child<'a, S, S::Timestamp>,
-    ) -> ProgramContents<Child<'a, S, S::Timestamp>, R> {
-        ProgramContents {
-            instructions: self.instructions.enter_region(scope),
-            block_instructions: self.block_instructions.enter_region(scope),
-            block_terminators: self.block_terminators.enter_region(scope),
-            block_descriptors: self.block_descriptors.enter_region(scope),
-            function_blocks: self.function_blocks.enter_region(scope),
-            function_descriptors: self.function_descriptors.enter_region(scope),
-        }
-    }
-}
-
-impl<'a, S, T, R> ProgramContents<Child<'a, S, T>, R>
-where
-    S: Scope,
-    R: Semigroup,
-    T: Timestamp + Refines<S::Timestamp>,
-{
-    pub fn leave(&self) -> ProgramContents<S, R> {
-        ProgramContents {
-            instructions: self.instructions.leave(),
-            block_instructions: self.block_instructions.leave(),
-            block_terminators: self.block_terminators.leave(),
-            block_descriptors: self.block_descriptors.leave(),
-            function_blocks: self.function_blocks.leave(),
-            function_descriptors: self.function_descriptors.leave(),
-        }
-    }
-}
-
-impl<'a, S, R> ProgramContents<Child<'a, S, S::Timestamp>, R>
-where
-    S: Scope,
-    R: Semigroup,
-{
-    pub fn leave_region(&self) -> ProgramContents<S, R> {
-        ProgramContents {
-            instructions: self.instructions.leave_region(),
-            block_instructions: self.block_instructions.leave_region(),
-            block_terminators: self.block_terminators.leave_region(),
-            block_descriptors: self.block_descriptors.leave_region(),
-            function_blocks: self.function_blocks.leave_region(),
-            function_descriptors: self.function_descriptors.leave_region(),
-        }
-    }
-}
+use timely::dataflow::Scope;
 
 pub trait Cleanup {
     fn cleanup(&self) -> Self;
 
     fn compact_basic_blocks(&self) -> Self;
+
+    fn cull_unreachable_blocks(&self) -> Self;
 }
 
-impl<S, R> Cleanup for ProgramContents<S, R>
+impl<S, R> Cleanup for Program<S, R>
 where
     S: Scope,
     S::Timestamp: Lattice,
@@ -250,7 +152,7 @@ where
                     (id, desc)
                 });
 
-            ProgramContents {
+            Program {
                 instructions: program.instructions.semijoin(&required_instructions),
                 block_instructions,
                 block_terminators: program.block_terminators.semijoin(&required_blocks),
@@ -265,6 +167,7 @@ where
             self.instructions
                 .join(&self.block_instructions)
                 .antijoin(&program.instructions.map(|(id, _)| id))
+                .consolidate()
                 .inspect(|((inst_id, (inst, block_id)), _, _)| {
                     tracing::trace!(
                         inst = ?inst,
@@ -276,18 +179,21 @@ where
 
             self.block_terminators
                 .antijoin(&program.block_terminators.map(|(id, _)| id))
+                .consolidate()
                 .inspect(|((block_id, term), _, _)| {
                     tracing::trace!("removed terminator {:?} from {:?}", term, block_id);
                 });
 
             self.function_blocks
                 .antijoin(&program.function_blocks.map(|(id, _)| id))
+                .consolidate()
                 .inspect(|((block_id, func_id), _, _)| {
                     tracing::trace!("removed {:?} from {:?}", block_id, func_id);
                 });
 
             self.function_descriptors
                 .antijoin(&self.function_descriptors.map(|(id, _)| id))
+                .consolidate()
                 .inspect(|((func_id, _desc), _, _)| tracing::trace!("removed func {:?}", func_id));
         }
 
@@ -428,7 +334,84 @@ where
                         (id, desc)
                     });
 
-                ProgramContents {
+                Program {
+                    instructions,
+                    block_instructions,
+                    block_terminators,
+                    block_descriptors,
+                    function_blocks,
+                    function_descriptors,
+                }
+                .leave_region()
+            })
+    }
+
+    fn cull_unreachable_blocks(&self) -> Self {
+        self.instructions
+            .scope()
+            .region_named("cull unreachable blocks", |region| {
+                let program = self.enter(region);
+
+                // The root nodes are the set function of entry blocks
+                let roots = program
+                    .function_descriptors
+                    .map(|(id, meta)| (meta.entry, id));
+
+                // The edges are the paths created by jumps and branches between blocks
+                let edges = program.block_terminators.flat_map(|(block, term)| {
+                    term.jump_targets()
+                        .into_iter()
+                        .map(move |target| (block, target))
+                });
+
+                // Propagate function ids along the intra-block paths, all remaining blocks
+                // are reachable
+                let reachable_blocks = propagate::propagate(&edges, &roots).map(|(block, _)| block);
+
+                let block_instructions = program
+                    .block_instructions
+                    .map(|(inst, block)| (block, inst))
+                    .semijoin(&reachable_blocks)
+                    .map(|(block, inst)| (inst, block));
+
+                let instructions = program
+                    .instructions
+                    .semijoin(&block_instructions.map(|(inst, _)| inst));
+
+                let block_terminators = program.block_terminators.semijoin(&reachable_blocks);
+                let block_descriptors = program.block_descriptors.semijoin(&reachable_blocks);
+                let function_blocks = program.function_blocks.semijoin(&reachable_blocks);
+
+                let agg_blocks = function_blocks
+                    .map(|(block, func)| (func, block))
+                    .consolidate()
+                    .reduce(|_func, blocks, output| {
+                        let blocks: Vec<_> = blocks.iter().map(|(&block, _)| block).collect();
+                        output.push((blocks, R::from(1)));
+                    });
+
+                let function_descriptors =
+                    program
+                        .function_descriptors
+                        .join_map(&agg_blocks, |&func, meta, blocks| {
+                            let mut meta = meta.clone();
+                            meta.basic_blocks = blocks.clone();
+
+                            (func, meta)
+                        });
+
+                if cfg!(debug_assertions) {
+                    program
+                        .function_blocks
+                        .antijoin(&reachable_blocks)
+                        .join(&program.function_blocks)
+                        .consolidate()
+                        .inspect(|((block, func), _, _)| {
+                            tracing::trace!("culled unreachable block {:?} from {:?}", block, func);
+                        });
+                }
+
+                Program {
                     instructions,
                     block_instructions,
                     block_terminators,

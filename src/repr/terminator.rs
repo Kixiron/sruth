@@ -19,6 +19,10 @@ pub enum Terminator {
 }
 
 impl Terminator {
+    pub const fn is_branching(&self) -> bool {
+        matches!(self, Self::Branch(_))
+    }
+
     // TODO: Make a `Return` struct
     pub const fn into_return(self) -> Option<Return> {
         if let Self::Return(ret) = self {

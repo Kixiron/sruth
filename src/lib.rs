@@ -13,8 +13,8 @@ mod tests {
         builder::Context,
         dataflow::{
             self,
-            operators::{Cleanup, CrossbeamExtractor, CrossbeamPusher, ProgramContents},
-            Diff, Time, TraceManager,
+            operators::{Cleanup, CrossbeamExtractor, CrossbeamPusher},
+            Diff, Program, Time, TraceManager,
         },
         optimize,
         repr::{
@@ -225,7 +225,7 @@ mod tests {
                 let function_descriptors =
                     function_trace.as_collection(|&id, func| (id, func.clone()));
 
-                let program = ProgramContents::new(
+                let program = Program::new(
                     instructions,
                     block_instructions,
                     block_terminators,
@@ -233,8 +233,12 @@ mod tests {
                     function_blocks,
                     function_descriptors,
                 )
+                .cull_unreachable_blocks()
                 .compact_basic_blocks()
                 .cleanup();
+
+                let _inline_heuristics =
+                    optimize::harvest_heuristics(&program).inspect(|x| println!("{:?}", x));
 
                 let instructions = program
                     .instructions

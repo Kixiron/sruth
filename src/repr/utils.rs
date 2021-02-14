@@ -41,6 +41,7 @@ pub trait InstructionExt: IRDisplay {
     fn dest_type(&self) -> Type;
 }
 
+#[allow(clippy::upper_case_acronyms)]
 pub trait IRDisplay {
     fn display<'a, D, A, R>(&self, ctx: DisplayCtx<'a, D, A, R>) -> DocBuilder<'a, D, A>
     where

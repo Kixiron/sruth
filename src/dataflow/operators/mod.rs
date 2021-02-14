@@ -7,12 +7,14 @@ mod distinct;
 mod event_utils;
 mod exchange;
 mod filter_map;
+mod max;
+mod min;
 mod partition;
 mod split;
 
 pub use arrange::{ArrangeByKeyExt, ArrangeBySelfExt};
 pub use buffered_flat_map::BufferedFlatMap;
-pub use cleanup::{Cleanup, ProgramContents};
+pub use cleanup::Cleanup;
 pub use collect::{
     CollectCastable, CollectDeclarations, CollectUsages, CollectValues, CollectVariableTypes,
 };
@@ -21,5 +23,7 @@ pub use distinct::DistinctExt;
 pub use event_utils::{CrossbeamExtractor, CrossbeamPusher};
 pub use exchange::ExchangeExt;
 pub use filter_map::FilterMap;
+pub use max::Max;
+pub use min::Min;
 pub use partition::PartitionExt;
 pub use split::{FilterSplit, Split};

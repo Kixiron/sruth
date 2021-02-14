@@ -16,6 +16,10 @@ abomonation = "0.7.3"
 crossbeam-channel = "0.5.0"
 abomonation_derive = "0.5.0"
 
+[dependencies.num-traits]
+version = "0.2.14"
+default-features = false
+
 [dependencies.lasso]
 version = "0.4.1"
 features = ["multi-threaded"]
