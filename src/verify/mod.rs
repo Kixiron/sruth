@@ -7,10 +7,10 @@ use crate::{
     },
     repr::{
         basic_block::BasicBlockMeta,
-        function::FunctionMeta,
+        function::FunctionDesc,
         instruction::{BinaryOp, Bitcast},
-        BasicBlockId, Cast, Constant, FuncId, InstId, Instruction, InstructionExt, Type, ValueKind,
-        VarId,
+        BasicBlockId, Cast, Constant, FuncId, InstId, Instruction, InstructionExt, Type, TypedVar,
+        ValueKind, VarId,
     },
 };
 use abomonation_derive::Abomonation;
@@ -36,7 +36,7 @@ pub fn verify<S, R>(
     scope: &mut S,
     instructions: &Collection<S, (InstId, Instruction), R>,
     basic_blocks: &Collection<S, (BasicBlockId, BasicBlockMeta), R>,
-    functions: &Collection<S, (FuncId, FunctionMeta), R>,
+    functions: &Collection<S, (FuncId, FunctionDesc), R>,
 ) -> Collection<S, ValidityError, R>
 where
     S: Scope,
@@ -51,16 +51,19 @@ where
     let undeclared_variables = used_variables.antijoin(
         &declared_variables
             .map(|(var, _)| var)
-            .concat(&function_params.map(|(var, _)| var)),
+            .concat(&function_params),
     );
 
     // TODO: Redecls of params
     #[allow(clippy::suspicious_map)]
     let redeclarations = declared_variables
-        .map(|(var, _)| var)
+        .map(|(var, _)| var.var)
         .count_core::<R>()
         .filter(|(_, count)| count > &R::from(1))
-        .join_map(&declared_variables, |&var, _count, &inst| (inst, var));
+        .join_map(
+            &declared_variables.map(|(var, inst)| (var.var, inst)),
+            |&var, _count, &inst| (inst, var),
+        );
 
     let block_ids = basic_blocks.map(|(block, _)| block);
     let targeted_blocks = basic_blocks.flat_map(|(block, meta)| {
@@ -100,9 +103,12 @@ where
             },
         );
 
-    let variable_types = instructions.collect_var_types().concat(&function_params);
+    let variable_types = instructions
+        .collect_var_types()
+        .concat(&function_params.map(|var| (var.var, var.ty)));
+
     let malformed_variables = undeclared_variables
-        .map(|(var, _)| var)
+        .map(|(var, _)| var.var)
         .concat(&redeclarations.map(|(_, var)| var));
 
     // Correct the types of malformed variables by giving them an error type (`None`)
@@ -151,9 +157,10 @@ where
     let (bitcast_infers, invalid_bitcast) = instructions.filter_split(|(id, inst)| {
         if let Some(bitcast) = inst.cast::<Bitcast>() {
             if bitcast.is_valid() {
-                (Some((bitcast.dest(), bitcast.dest_ty)), None)
+                (Some((bitcast.dest(), bitcast.dest_ty().clone())), None)
             } else {
-                (None, Some((id, bitcast.types())))
+                let (source, dest) = bitcast.types();
+                (None, Some((id, (source.clone(), dest.clone()))))
             }
         } else {
             (None, None)
@@ -209,7 +216,7 @@ where
 pub enum ValidityError {
     UndeclaredVariable {
         inst: InstId,
-        var: VarId,
+        var: TypedVar,
     },
     Redeclaration {
         inst: InstId,
@@ -245,7 +252,7 @@ pub enum ValidityError {
 #[allow(clippy::too_many_arguments)]
 fn concat_validity_errors<S, R>(
     scope: &mut S,
-    undeclared_variables: &Collection<S, (VarId, InstId), R>,
+    undeclared_variables: &Collection<S, (TypedVar, InstId), R>,
     redeclarations: &Collection<S, (InstId, VarId), R>,
     undeclared_blocks: &Collection<S, (BasicBlockId, BasicBlockId), R>,
     cross_function_jumps: &Collection<S, (BasicBlockId, FuncId, BasicBlockId, FuncId), R>,

@@ -1,6 +1,6 @@
 use crate::repr::{
     utils::{DisplayCtx, IRDisplay, InstructionExt, InstructionPurity},
-    Type, Value, VarId,
+    Type, TypedVar, Value, VarId,
 };
 use abomonation_derive::Abomonation;
 use lasso::Resolver;
@@ -40,15 +40,27 @@ impl InstructionExt for Neg {
         1
     }
 
-    fn replace_uses(&mut self, from: VarId, to: Value) -> bool {
+    fn replace_uses(&mut self, from: VarId, to: &Value) -> bool {
         if let Some(var) = self.value.as_var() {
             if var == from {
-                self.value = to;
+                self.value = to.clone();
                 return true;
             }
         }
 
         false
+    }
+
+    fn used_vars(&self) -> Vec<TypedVar> {
+        self.value.as_typed_var().into_iter().collect()
+    }
+
+    fn used_values(&self) -> Vec<&Value> {
+        vec![&self.value]
+    }
+
+    fn used_values_mut(&mut self) -> Vec<&mut Value> {
+        vec![&mut self.value]
     }
 }
 

@@ -3,7 +3,7 @@ use crate::{
         operators::{CollectCastable, CollectDeclarations, CountExt, FilterMap},
         Program,
     },
-    repr::{function::FunctionMeta, instruction::Call, terminator::Return},
+    repr::{function::FunctionDesc, instruction::Call, terminator::Return, InstructionExt},
 };
 use differential_dataflow::{
     algorithms::graphs::propagate,
@@ -55,7 +55,7 @@ where
 
                     let used_vars = instructions
                         .semijoin(&required)
-                        .flat_map(|(_, inst)| inst.used_vars());
+                        .flat_map(|(_, inst)| inst.used_vars().into_iter());
 
                     declared_vars
                         .semijoin(&used_vars)
@@ -305,7 +305,7 @@ where
                 // Update all function meta with the blocks they now contain
                 let function_descriptors =
                     function_meta.join_map(&function_block_lists, |&func, meta, blocks| {
-                        let meta = FunctionMeta {
+                        let meta = FunctionDesc {
                             basic_blocks: blocks.clone(),
                             ..meta.clone()
                         };

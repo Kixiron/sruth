@@ -2,9 +2,9 @@ use crate::{
     builder::{BuildResult, BuilderError, FunctionBuilder},
     repr::{
         basic_block::BasicBlockMeta,
-        instruction::{Add, Assign, Call, Div, Mul, Sub, TypedVar},
+        instruction::{Add, Assign, Call, Div, Mul, Sub},
         terminator::{Branch, Label, Return},
-        BasicBlockId, FuncId, Ident, InstId, Terminator, Type, Value, VarId,
+        BasicBlockId, FuncId, Ident, InstId, Terminator, Type, TypedVar, Value, VarId,
     },
 };
 use std::{convert::TryInto, mem, thread};

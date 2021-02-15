@@ -4,8 +4,8 @@ use crate::{
         EffectEdge,
     },
     repr::{
-        basic_block::BasicBlockMeta, function::FunctionMeta, instruction::TypedVar, BasicBlockId,
-        FuncId, Ident, InstId, Instruction, Type, VarId,
+        basic_block::BasicBlockMeta, function::FunctionDesc, BasicBlockId, FuncId, Ident, InstId,
+        Instruction, Type, TypedVar,
     },
 };
 use std::{convert::TryInto, mem, thread};
@@ -14,7 +14,7 @@ use std::{convert::TryInto, mem, thread};
 pub struct FunctionBuilder<'a> {
     pub(super) meta: IncompleteFunction,
     pub(super) blocks: &'a mut Vec<BasicBlockMeta>,
-    pub(super) functions: &'a mut Vec<FunctionMeta>,
+    pub(super) functions: &'a mut Vec<FunctionDesc>,
     pub(super) instructions: &'a mut Vec<(InstId, Instruction)>,
     pub(super) effect_edges: &'a mut Vec<EffectEdge>,
     pub(super) context: &'a Context,
@@ -65,7 +65,7 @@ impl<'a> FunctionBuilder<'a> {
         T: Into<Type>,
     {
         let (id, ty) = (self.context.var_id(), ty.into());
-        self.meta.params.push((id, ty.clone()));
+        self.meta.params.push(TypedVar::new(id, ty.clone()));
 
         TypedVar::new(id, ty)
     }
@@ -77,7 +77,7 @@ impl<'a> FunctionBuilder<'a> {
         let mut ids = Vec::with_capacity(10);
         for ty in types {
             let id = self.context.var_id();
-            self.meta.params.push((id, ty.clone()));
+            self.meta.params.push(TypedVar::new(id, ty.clone()));
             ids.push(TypedVar::new(id, ty));
         }
 
@@ -93,7 +93,7 @@ impl<'a> FunctionBuilder<'a> {
     pub(super) fn new(
         meta: IncompleteFunction,
         blocks: &'a mut Vec<BasicBlockMeta>,
-        functions: &'a mut Vec<FunctionMeta>,
+        functions: &'a mut Vec<FunctionDesc>,
         instructions: &'a mut Vec<(InstId, Instruction)>,
         effect_edges: &'a mut Vec<EffectEdge>,
         context: &'a Context,
@@ -191,7 +191,7 @@ impl Drop for FunctionBuilder<'_> {
 pub(super) struct IncompleteFunction {
     name: Option<Ident>,
     id: FuncId,
-    params: Vec<(VarId, Type)>,
+    params: Vec<TypedVar>,
     pub(super) ret_ty: Type,
     entry: Option<BasicBlockId>,
     pub(super) basic_blocks: Vec<BasicBlockId>,
@@ -201,7 +201,7 @@ impl IncompleteFunction {
     pub(super) const fn new(
         name: Option<Ident>,
         id: FuncId,
-        params: Vec<(VarId, Type)>,
+        params: Vec<TypedVar>,
         ret_ty: Type,
         entry: Option<BasicBlockId>,
         basic_blocks: Vec<BasicBlockId>,
@@ -228,17 +228,17 @@ impl IncompleteFunction {
     }
 }
 
-impl TryInto<FunctionMeta> for IncompleteFunction {
+impl TryInto<FunctionDesc> for IncompleteFunction {
     type Error = BuilderError;
 
-    fn try_into(self) -> Result<FunctionMeta, Self::Error> {
+    fn try_into(self) -> Result<FunctionDesc, Self::Error> {
         let entry = self.entry.ok_or(BuilderError::MissingEntryBlock)?;
 
         if self.basic_blocks.is_empty() {
             return Err(BuilderError::EmptyFunctionBody);
         }
 
-        Ok(FunctionMeta {
+        Ok(FunctionDesc {
             name: self.name,
             id: self.id,
             params: self.params,

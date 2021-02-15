@@ -14,4 +14,4 @@ pub use instruction::{InstId, Instruction, VarId};
 pub use terminator::Terminator;
 pub use types::Type;
 pub use utils::{Cast, Ident, InstructionExt, RawCast};
-pub use value::{Value, ValueKind};
+pub use value::{TypedVar, Value, ValueKind};

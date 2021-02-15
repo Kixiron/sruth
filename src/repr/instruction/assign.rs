@@ -1,6 +1,6 @@
 use crate::repr::{
     utils::{DisplayCtx, IRDisplay, InstructionExt, InstructionPurity},
-    Ident, Type, Value,
+    Ident, Type, TypedVar, Value,
 };
 use abomonation_derive::Abomonation;
 use lasso::Resolver;
@@ -41,15 +41,27 @@ impl InstructionExt for Assign {
         0
     }
 
-    fn replace_uses(&mut self, from: VarId, to: Value) -> bool {
+    fn replace_uses(&mut self, from: VarId, to: &Value) -> bool {
         if let Some(var) = self.value.as_var() {
             if var == from {
-                self.value = to;
+                self.value = to.clone();
                 return true;
             }
         }
 
         false
+    }
+
+    fn used_vars(&self) -> Vec<TypedVar> {
+        self.value.as_typed_var().into_iter().collect()
+    }
+
+    fn used_values(&self) -> Vec<&Value> {
+        vec![&self.value]
+    }
+
+    fn used_values_mut(&mut self) -> Vec<&mut Value> {
+        vec![&mut self.value]
     }
 }
 
@@ -90,17 +102,5 @@ impl IRDisplay for VarId {
         R: Resolver,
     {
         ctx.text(format!("_{}", self.0))
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
-pub struct TypedVar {
-    pub var: VarId,
-    pub ty: Type,
-}
-
-impl TypedVar {
-    pub const fn new(var: VarId, ty: Type) -> Self {
-        Self { var, ty }
     }
 }

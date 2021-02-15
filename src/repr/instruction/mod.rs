@@ -5,7 +5,7 @@ mod call;
 mod cmp;
 mod neg;
 
-pub use assign::{Assign, TypedVar, VarId};
+pub use assign::{Assign, VarId};
 pub use binary_ops::{Add, BinaryOp, BinopExt, Div, Mul, Sub};
 pub use bitcast::Bitcast;
 pub use call::Call;
@@ -14,7 +14,7 @@ pub use neg::Neg;
 
 use crate::repr::{
     utils::{DisplayCtx, IRDisplay, InstructionExt, InstructionPurity, RawCast, RawRefCast},
-    Type, Value,
+    Type, TypedVar, Value,
 };
 use abomonation_derive::Abomonation;
 use lasso::Resolver;
@@ -42,99 +42,6 @@ impl Instruction {
             self,
             Self::Add(_) | Self::Sub(_) | Self::Mul(_) | Self::Div(_)
         )
-    }
-
-    // TODO: Make this a method on InstructionExt
-    pub fn used_vars(&self) -> Vec<TypedVar> {
-        match self {
-            Self::Assign(assign) => {
-                if let Some(val) = assign.value.as_var() {
-                    vec![TypedVar::new(val, assign.value.ty.clone())]
-                } else {
-                    Vec::new()
-                }
-            }
-
-            Self::Add(add) => add
-                .lhs
-                .as_var()
-                .into_iter()
-                .chain(add.rhs.as_var())
-                .collect(),
-
-            Self::Sub(sub) => sub
-                .lhs
-                .as_var()
-                .into_iter()
-                .chain(sub.rhs.as_var())
-                .collect(),
-
-            Self::Mul(mul) => mul
-                .lhs
-                .as_var()
-                .into_iter()
-                .chain(mul.rhs.as_var())
-                .collect(),
-
-            Self::Div(div) => div
-                .lhs
-                .as_var()
-                .into_iter()
-                .chain(div.rhs.as_var())
-                .collect(),
-
-            Self::Bitcast(bitcast) => vec![bitcast.source],
-
-            Self::Neg(neg) => {
-                if let Some(val) = neg.value.as_var() {
-                    vec![val]
-                } else {
-                    Vec::new()
-                }
-            }
-
-            Self::Cmp(cmp) => cmp
-                .lhs
-                .as_var()
-                .into_iter()
-                .chain(cmp.rhs.as_var())
-                .collect(),
-
-            Self::Call(call) => call.used_vars(),
-        }
-    }
-
-    // TODO: Make this a method on InstructionExt
-    pub fn used_values(&self) -> impl Iterator<Item = Value> {
-        // TODO: Less clones, less allocation
-        match self {
-            Self::Assign(assign) => vec![assign.value.clone()],
-            Self::Add(add) => vec![add.lhs.clone(), add.rhs.clone()],
-            Self::Sub(sub) => vec![sub.lhs.clone(), sub.rhs.clone()],
-            Self::Mul(mul) => vec![mul.lhs.clone(), mul.rhs.clone()],
-            Self::Div(div) => vec![div.lhs.clone(), div.rhs.clone()],
-            Self::Bitcast(_) => Vec::new(),
-            Self::Neg(neg) => vec![neg.value.clone()],
-            Self::Cmp(cmp) => vec![cmp.lhs.clone(), cmp.rhs.clone()],
-            Self::Call(call) => call.used_values(),
-        }
-        .into_iter()
-    }
-
-    pub fn used_values_mut(&mut self) -> impl Iterator<Item = &mut Value> {
-        // TODO: Less clones, less allocation
-        match self {
-            Self::Assign(assign) => vec![&mut assign.value],
-            Self::Add(add) => vec![&mut add.lhs, &mut add.rhs],
-            Self::Sub(sub) => vec![&mut sub.lhs, &mut sub.rhs],
-            Self::Mul(mul) => vec![&mut mul.lhs, &mut mul.rhs],
-            Self::Div(div) => vec![&mut div.lhs, &mut div.rhs],
-            Self::Bitcast(_) => Vec::new(),
-            Self::Neg(neg) => vec![&mut neg.value],
-            Self::Cmp(cmp) => vec![&mut cmp.lhs, &mut cmp.rhs],
-            Self::Call(call) => call.used_values_mut(),
-        }
-        .into_iter()
     }
 }
 
@@ -211,9 +118,27 @@ macro_rules! impl_instruction {
                 }
             }
 
-            fn replace_uses(&mut self, from: VarId, to: Value) -> bool {
+            fn replace_uses(&mut self, from: VarId, to: &Value) -> bool {
                 match self {
                     $(Self::$type(value) => value.replace_uses(from, to),)*
+                }
+            }
+
+            fn used_vars(&self) -> Vec<TypedVar> {
+                match self {
+                    $(Self::$type(value) => value.used_vars(),)*
+                }
+            }
+
+            fn used_values(&self) -> Vec<&Value> {
+                match self {
+                    $(Self::$type(value) => value.used_values(),)*
+                }
+            }
+
+            fn used_values_mut(&mut self) -> Vec<&mut Value> {
+                match self {
+                    $(Self::$type(value) => value.used_values_mut(),)*
                 }
             }
         }

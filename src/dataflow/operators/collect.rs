@@ -1,5 +1,5 @@
 use crate::repr::{
-    instruction::TypedVar, Cast, InstId, Instruction, InstructionExt, RawCast, Type, Value, VarId,
+    Cast, InstId, Instruction, InstructionExt, RawCast, Type, TypedVar, Value, VarId,
 };
 use differential_dataflow::{difference::Semigroup, Collection, Data};
 use timely::dataflow::Scope;
@@ -49,13 +49,15 @@ where
     S: Scope,
     R: Semigroup,
 {
-    type Output = Collection<S, (VarId, InstId), R>;
+    type Output = Collection<S, (TypedVar, InstId), R>;
 
     fn collect_declarations_named(&self, name: &str) -> Self::Output {
         self.scope().region_named(name, |region| {
             let stream = self.enter_region(region);
 
-            stream.map(|(id, inst)| (inst.dest(), id)).leave_region()
+            stream
+                .map(|(id, inst)| (TypedVar::new(inst.dest(), inst.dest_type()), id))
+                .leave_region()
         })
     }
 }
@@ -110,7 +112,13 @@ where
             let stream = self.enter_region(region);
 
             stream
-                .flat_map(|(id, inst)| inst.used_values().map(move |val| (id, val)))
+                .flat_map(|(id, inst)| {
+                    inst.used_values()
+                        .into_iter()
+                        .cloned()
+                        .map(move |val| (id, val))
+                        .collect::<Vec<_>>()
+                })
                 .leave_region()
         })
     }

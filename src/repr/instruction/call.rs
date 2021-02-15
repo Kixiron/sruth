@@ -1,6 +1,6 @@
 use crate::repr::{
     utils::{DisplayCtx, IRDisplay, InstructionExt, InstructionPurity},
-    FuncId, Type, Value, VarId,
+    FuncId, Type, TypedVar, Value, VarId,
 };
 use abomonation_derive::Abomonation;
 use lasso::Resolver;
@@ -23,18 +23,6 @@ impl Call {
             ret_ty,
         }
     }
-
-    pub fn used_vars(&self) -> Vec<VarId> {
-        self.args.iter().filter_map(|arg| arg.as_var()).collect()
-    }
-
-    pub fn used_values(&self) -> Vec<Value> {
-        self.args.clone()
-    }
-
-    pub fn used_values_mut(&mut self) -> Vec<&mut Value> {
-        self.args.iter_mut().collect()
-    }
 }
 
 impl InstructionExt for Call {
@@ -55,19 +43,34 @@ impl InstructionExt for Call {
         5
     }
 
-    fn replace_uses(&mut self, from: VarId, to: Value) -> bool {
+    fn replace_uses(&mut self, from: VarId, to: &Value) -> bool {
         let mut replaced = false;
 
         for value in self.args.iter_mut() {
             if let Some(var) = value.as_var() {
                 if var == from {
-                    *value = to;
+                    *value = to.clone();
                     replaced = true;
                 }
             }
         }
 
         replaced
+    }
+
+    fn used_vars(&self) -> Vec<TypedVar> {
+        self.args
+            .iter()
+            .filter_map(|arg| arg.as_typed_var())
+            .collect()
+    }
+
+    fn used_values(&self) -> Vec<&Value> {
+        self.args.iter().collect()
+    }
+
+    fn used_values_mut(&mut self) -> Vec<&mut Value> {
+        self.args.iter_mut().collect()
     }
 }
 

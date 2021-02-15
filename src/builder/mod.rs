@@ -13,9 +13,9 @@ use crate::{
     dataflow::InputManager,
     repr::{
         basic_block::BasicBlockMeta,
-        function::{FunctionMeta, Metadata},
+        function::{FunctionDesc, Metadata},
         instruction::Call,
-        BasicBlock, FuncId, Function, Ident, InstId, Instruction, Type,
+        BasicBlock, FuncId, Function, Ident, InstId, Instruction, InstructionExt, Type,
     },
 };
 use abomonation_derive::Abomonation;
@@ -25,7 +25,7 @@ use timely::progress::Timestamp;
 
 pub struct Builder {
     blocks: Vec<BasicBlockMeta>,
-    functions: Vec<FunctionMeta>,
+    functions: Vec<FunctionDesc>,
     instructions: Vec<(InstId, Instruction)>,
     effect_edges: Vec<EffectEdge>,
     context: Arc<Context>,

@@ -1,7 +1,7 @@
 use super::Type;
 use crate::repr::{
     constant::Constant,
-    instruction::{TypedVar, VarId},
+    instruction::VarId,
     utils::{DisplayCtx, IRDisplay},
 };
 use abomonation_derive::Abomonation;
@@ -68,6 +68,10 @@ impl Value {
 
     pub const fn split(self) -> (ValueKind, Type) {
         (self.value, self.ty)
+    }
+
+    pub fn as_typed_var(&self) -> Option<TypedVar> {
+        self.as_var().map(|var| TypedVar::new(var, self.ty.clone()))
     }
 }
 
@@ -177,5 +181,32 @@ impl IRDisplay for ValueKind {
             Self::Const(constant) => constant.display(ctx),
             Self::Var(var) => var.display(ctx),
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
+pub struct TypedVar {
+    pub var: VarId,
+    pub ty: Type,
+}
+
+impl TypedVar {
+    pub const fn new(var: VarId, ty: Type) -> Self {
+        Self { var, ty }
+    }
+}
+
+impl IRDisplay for TypedVar {
+    fn display<'a, D, A, R>(&self, ctx: DisplayCtx<'a, D, A, R>) -> DocBuilder<'a, D, A>
+    where
+        D: DocAllocator<'a, A>,
+        D::Doc: Clone,
+        A: Clone + 'a,
+        R: Resolver,
+    {
+        self.ty
+            .display(ctx)
+            .append(ctx.space())
+            .append(self.ty.display(ctx))
     }
 }

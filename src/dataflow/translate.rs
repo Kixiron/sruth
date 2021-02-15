@@ -2,7 +2,7 @@ use crate::{
     dataflow::InputManager,
     repr::{
         basic_block::BasicBlockMeta,
-        function::FunctionMeta,
+        function::FunctionDesc,
         utils::{DisplayCtx, IRDisplay},
         Function, InstId,
     },
@@ -30,7 +30,7 @@ where
             .unwrap();
         println!();
 
-        let meta = FunctionMeta::new(
+        let meta = FunctionDesc::new(
             function.name,
             function.id,
             function.params,

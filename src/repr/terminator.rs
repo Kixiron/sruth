@@ -8,6 +8,8 @@ use abomonation_derive::Abomonation;
 use lasso::Resolver;
 use pretty::{DocAllocator, DocBuilder};
 
+use super::TypedVar;
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
 pub enum Terminator {
     // TODO: Make this hold a label & a dedicated `Jump` struct
@@ -248,8 +250,8 @@ impl Return {
         Self { value }
     }
 
-    pub fn returned_var(&self) -> Option<VarId> {
-        self.value.as_ref().and_then(Value::as_var)
+    pub fn returned_var(&self) -> Option<TypedVar> {
+        self.value.as_ref().and_then(Value::as_typed_var)
     }
 
     pub fn replace_uses(&mut self, from: VarId, to: VarId) -> bool {

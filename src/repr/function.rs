@@ -1,7 +1,7 @@
-use super::{utils::IRDisplay, BasicBlockId};
+use super::{utils::IRDisplay, BasicBlockId, TypedVar};
 use crate::{
     optimize::inline::InlineHeuristics,
-    repr::{utils::DisplayCtx, BasicBlock, Ident, Type, VarId},
+    repr::{utils::DisplayCtx, BasicBlock, Ident, Type},
 };
 use abomonation_derive::Abomonation;
 use lasso::Resolver;
@@ -13,7 +13,7 @@ pub struct Function {
     pub name: Option<Ident>,
     pub id: FuncId,
     // TODO: Struct param
-    pub params: Vec<(VarId, Type)>,
+    pub params: Vec<TypedVar>,
     pub ret_ty: Type,
     pub entry: BasicBlockId,
     pub basic_blocks: Vec<BasicBlock>,
@@ -43,11 +43,12 @@ impl IRDisplay for Function {
             .append(name)
             .append(
                 ctx.intersperse(
-                    self.params.iter().map(|(var, ty)| {
-                        var.display(ctx)
+                    self.params.iter().map(|var| {
+                        var.var
+                            .display(ctx)
                             .append(ctx.text(":"))
                             .append(ctx.space())
-                            .append(ty.display(ctx))
+                            .append(var.ty.display(ctx))
                             .group()
                     }),
                     ctx.text(",").append(ctx.space()),
@@ -179,20 +180,20 @@ impl IRDisplay for FuncId {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
-pub struct FunctionMeta {
+pub struct FunctionDesc {
     pub name: Option<Ident>,
     pub id: FuncId,
-    pub params: Vec<(VarId, Type)>,
+    pub params: Vec<TypedVar>,
     pub ret_ty: Type,
     pub entry: BasicBlockId,
     pub basic_blocks: Vec<BasicBlockId>,
 }
 
-impl FunctionMeta {
+impl FunctionDesc {
     pub const fn new(
         name: Option<Ident>,
         id: FuncId,
-        params: Vec<(VarId, Type)>,
+        params: Vec<TypedVar>,
         ret_ty: Type,
         entry: BasicBlockId,
         basic_blocks: Vec<BasicBlockId>,

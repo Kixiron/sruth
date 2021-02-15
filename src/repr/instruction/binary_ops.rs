@@ -1,7 +1,7 @@
 use crate::repr::{
     instruction::{Assign, VarId},
     utils::{DisplayCtx, IRDisplay, InstructionExt, InstructionPurity, RawCast},
-    Constant, Instruction, Type, Value, ValueKind,
+    Constant, Instruction, Type, TypedVar, Value, ValueKind,
 };
 use abomonation_derive::Abomonation;
 use lasso::Resolver;
@@ -292,24 +292,39 @@ macro_rules! impl_binop {
                     1
                 }
 
-                fn replace_uses(&mut self, from: VarId, to: Value) -> bool {
+                fn replace_uses(&mut self, from: VarId, to: &Value) -> bool {
                     let mut replaced = false;
 
                     if let Some(var) = self.lhs.as_var() {
                         if var == from {
-                            self.lhs = to;
+                            self.lhs = to.clone();
                             replaced = true
                         }
                     }
 
                     if let Some(var) = self.rhs.as_var() {
                         if var == from {
-                            self.rhs = to;
+                            self.rhs = to.clone();
                             replaced = true
                         }
                     }
 
                     replaced
+                }
+
+                fn used_vars(&self) -> Vec<TypedVar> {
+                    self.lhs.as_typed_var()
+                        .into_iter()
+                        .chain(self.rhs.as_typed_var())
+                        .collect()
+                }
+
+                fn used_values(&self) -> Vec<&Value> {
+                    vec![&self.lhs, &self.rhs]
+                }
+
+                fn used_values_mut(&mut self) -> Vec<&mut Value> {
+                    vec![&mut self.lhs, &mut self.rhs]
                 }
             }
         )*
@@ -386,9 +401,27 @@ macro_rules! impl_binop {
                 }
             }
 
-            fn replace_uses(&mut self, from: VarId, to: Value) -> bool {
+            fn replace_uses(&mut self, from: VarId, to: &Value) -> bool {
                 match self {
                     $(Self::$type(op) => op.replace_uses(from, to),)*
+                }
+            }
+
+            fn used_vars(&self) -> Vec<TypedVar> {
+                match self {
+                    $(Self::$type(op) => op.used_vars(),)*
+                }
+            }
+
+            fn used_values(&self) -> Vec<&Value> {
+                match self {
+                    $(Self::$type(op) => op.used_values(),)*
+                }
+            }
+
+            fn used_values_mut(&mut self) -> Vec<&mut Value> {
+                match self {
+                    $(Self::$type(op) => op.used_values_mut(),)*
                 }
             }
         }

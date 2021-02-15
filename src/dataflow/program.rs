@@ -1,7 +1,7 @@
 use std::panic::Location;
 
 use crate::repr::{
-    basic_block::BasicBlockMeta, function::FunctionMeta, BasicBlockId, FuncId, InstId, Instruction,
+    basic_block::BasicBlockMeta, function::FunctionDesc, BasicBlockId, FuncId, InstId, Instruction,
     Terminator,
 };
 use differential_dataflow::{
@@ -31,7 +31,7 @@ where
     pub block_terminators: Collection<S, (BasicBlockId, Terminator), R>,
     pub block_descriptors: Collection<S, (BasicBlockId, BasicBlockMeta), R>,
     pub function_blocks: Collection<S, (BasicBlockId, FuncId), R>,
-    pub function_descriptors: Collection<S, (FuncId, FunctionMeta), R>,
+    pub function_descriptors: Collection<S, (FuncId, FunctionDesc), R>,
 }
 
 impl<S, R> Program<S, R>
@@ -45,7 +45,7 @@ where
         block_terminators: Collection<S, (BasicBlockId, Terminator), R>,
         block_descriptors: Collection<S, (BasicBlockId, BasicBlockMeta), R>,
         function_blocks: Collection<S, (BasicBlockId, FuncId), R>,
-        function_descriptors: Collection<S, (FuncId, FunctionMeta), R>,
+        function_descriptors: Collection<S, (FuncId, FunctionDesc), R>,
     ) -> Self {
         Self {
             instructions,
@@ -271,7 +271,7 @@ where
     pub block_terminators: Variable<S, (BasicBlockId, Terminator), R>,
     pub block_descriptors: Variable<S, (BasicBlockId, BasicBlockMeta), R>,
     pub function_blocks: Variable<S, (BasicBlockId, FuncId), R>,
-    pub function_descriptors: Variable<S, (FuncId, FunctionMeta), R>,
+    pub function_descriptors: Variable<S, (FuncId, FunctionDesc), R>,
 }
 
 impl<S, R> ProgramVariable<S, R>
@@ -286,7 +286,7 @@ where
         block_terminators: Variable<S, (BasicBlockId, Terminator), R>,
         block_descriptors: Variable<S, (BasicBlockId, BasicBlockMeta), R>,
         function_blocks: Variable<S, (BasicBlockId, FuncId), R>,
-        function_descriptors: Variable<S, (FuncId, FunctionMeta), R>,
+        function_descriptors: Variable<S, (FuncId, FunctionDesc), R>,
     ) -> Self {
         Self {
             instructions,
@@ -354,7 +354,7 @@ where
     pub function_blocks:
         Arranged<S, TraceAgent<OrdValSpine<BasicBlockId, FuncId, S::Timestamp, R>>>,
     pub function_descriptors:
-        Arranged<S, TraceAgent<OrdValSpine<FuncId, FunctionMeta, S::Timestamp, R>>>,
+        Arranged<S, TraceAgent<OrdValSpine<FuncId, FunctionDesc, S::Timestamp, R>>>,
 }
 
 impl<S, R> ArrangedProgram<S, R>
@@ -409,7 +409,7 @@ where
     pub block_terminators: TraceAgent<OrdValSpine<BasicBlockId, Terminator, T, R>>,
     pub block_descriptors: TraceAgent<OrdValSpine<BasicBlockId, BasicBlockMeta, T, R>>,
     pub function_blocks: TraceAgent<OrdValSpine<BasicBlockId, FuncId, T, R>>,
-    pub function_descriptors: TraceAgent<OrdValSpine<FuncId, FunctionMeta, T, R>>,
+    pub function_descriptors: TraceAgent<OrdValSpine<FuncId, FunctionDesc, T, R>>,
 }
 
 impl<T, R> ProgramTrace<T, R>

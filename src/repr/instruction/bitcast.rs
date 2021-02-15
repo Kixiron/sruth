@@ -1,6 +1,6 @@
 use crate::repr::{
     utils::{DisplayCtx, IRDisplay, InstructionPurity},
-    InstructionExt, Type, Value, VarId,
+    InstructionExt, Type, TypedVar, Value, ValueKind, VarId,
 };
 use abomonation_derive::Abomonation;
 use lasso::Resolver;
@@ -8,28 +8,36 @@ use pretty::{DocAllocator, DocBuilder};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
 pub struct Bitcast {
-    pub dest: VarId,
-    pub dest_ty: Type,
-    pub source: VarId,
-    pub source_ty: Type,
+    pub dest: TypedVar,
+    pub source: Value,
 }
 
 impl Bitcast {
+    pub const fn new(dest: TypedVar, source: TypedVar) -> Self {
+        Self {
+            dest,
+            source: Value {
+                value: ValueKind::Var(source.var),
+                ty: source.ty,
+            },
+        }
+    }
+
     pub const fn dest_ty(&self) -> &Type {
-        &self.dest_ty
+        &self.dest.ty
     }
 
     pub const fn source_ty(&self) -> &Type {
-        &self.source_ty
+        &self.source.ty
     }
 
-    pub fn types(self) -> (Type, Type) {
-        (self.source_ty, self.dest_ty)
+    pub fn types(&self) -> (&Type, &Type) {
+        (&self.source.ty, &self.dest.ty)
     }
 
     pub fn is_valid(&self) -> bool {
         matches!(
-            (&self.dest_ty, &self.source_ty),
+            (&self.dest.ty, &self.source.ty),
             (Type::Int, Type::Int)
                 | (Type::Int, Type::Uint)
                 | (Type::Uint, Type::Int)
@@ -43,17 +51,17 @@ impl Bitcast {
     }
 
     pub fn is_redundant(&self) -> bool {
-        self.dest_ty == self.source_ty
+        self.dest.ty == self.source.ty
     }
 }
 
 impl InstructionExt for Bitcast {
     fn dest(&self) -> VarId {
-        self.dest
+        self.dest.var
     }
 
     fn dest_type(&self) -> Type {
-        self.dest_ty.clone()
+        self.dest.ty.clone()
     }
 
     fn purity(&self) -> InstructionPurity {
@@ -64,15 +72,27 @@ impl InstructionExt for Bitcast {
         0
     }
 
-    fn replace_uses(&mut self, from: VarId, to: Value) -> bool {
-        if let Some(to) = to.as_var() {
-            if self.source == from {
-                self.source = to;
+    fn replace_uses(&mut self, from: VarId, to: &Value) -> bool {
+        if let Some(to) = to.as_typed_var() {
+            if self.source.as_var() == Some(from) {
+                self.source = to.into();
                 return true;
             }
         }
 
         false
+    }
+
+    fn used_vars(&self) -> Vec<TypedVar> {
+        self.source.as_typed_var().into_iter().collect()
+    }
+
+    fn used_values(&self) -> Vec<&Value> {
+        vec![&self.source]
+    }
+
+    fn used_values_mut(&mut self) -> Vec<&mut Value> {
+        vec![&mut self.source]
     }
 }
 
@@ -85,6 +105,7 @@ impl IRDisplay for Bitcast {
         R: Resolver,
     {
         self.dest
+            .var
             .display(ctx)
             .append(ctx.space())
             .append(ctx.text(":="))
@@ -93,10 +114,9 @@ impl IRDisplay for Bitcast {
             .append(ctx.space())
             .append(self.source.display(ctx))
             .append(ctx.space())
-            .append(self.source_ty.display(ctx))
-            .append(ctx.text(","))
+            .append(ctx.text("as"))
             .append(ctx.space())
-            .append(self.dest_ty.display(ctx))
+            .append(self.dest.ty.display(ctx))
             .group()
     }
 }

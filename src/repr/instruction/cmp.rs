@@ -1,6 +1,6 @@
 use crate::repr::{
     utils::{DisplayCtx, IRDisplay, InstructionExt, InstructionPurity},
-    Type, Value, VarId,
+    Type, TypedVar, Value, VarId,
 };
 use abomonation_derive::Abomonation;
 use lasso::Resolver;
@@ -40,24 +40,40 @@ impl InstructionExt for Cmp {
         1
     }
 
-    fn replace_uses(&mut self, from: VarId, to: Value) -> bool {
+    fn replace_uses(&mut self, from: VarId, to: &Value) -> bool {
         let mut replaced = false;
 
         if let Some(var) = self.lhs.as_var() {
             if var == from {
-                self.lhs = to;
+                self.lhs = to.clone();
                 replaced = true
             }
         }
 
         if let Some(var) = self.rhs.as_var() {
             if var == from {
-                self.rhs = to;
+                self.rhs = to.clone();
                 replaced = true
             }
         }
 
         replaced
+    }
+
+    fn used_vars(&self) -> Vec<TypedVar> {
+        self.lhs
+            .as_typed_var()
+            .into_iter()
+            .chain(self.rhs.as_typed_var())
+            .collect()
+    }
+
+    fn used_values(&self) -> Vec<&Value> {
+        vec![&self.lhs, &self.rhs]
+    }
+
+    fn used_values_mut(&mut self) -> Vec<&mut Value> {
+        vec![&mut self.lhs, &mut self.rhs]
     }
 }
 
