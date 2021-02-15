@@ -14,7 +14,7 @@ use differential_dataflow::{
     Collection, ExchangeData,
 };
 use timely::{
-    dataflow::{scopes::Child, Scope},
+    dataflow::{operators::probe::Handle, scopes::Child, Scope},
     progress::{timestamp::Refines, Timestamp},
 };
 
@@ -95,6 +95,24 @@ where
             block_descriptors: self.block_descriptors.consolidate(),
             function_blocks: self.function_blocks.consolidate(),
             function_descriptors: self.function_descriptors.consolidate(),
+        }
+    }
+
+    pub fn probe(&self) -> Handle<S::Timestamp> {
+        let mut handle = Handle::new();
+        self.probe_with(&mut handle);
+
+        handle
+    }
+
+    pub fn probe_with(&self, handle: &mut Handle<S::Timestamp>) -> Self {
+        Self {
+            instructions: self.instructions.probe_with(handle),
+            block_instructions: self.block_instructions.probe_with(handle),
+            block_terminators: self.block_terminators.probe_with(handle),
+            block_descriptors: self.block_descriptors.probe_with(handle),
+            function_blocks: self.function_blocks.probe_with(handle),
+            function_descriptors: self.function_descriptors.probe_with(handle),
         }
     }
 }

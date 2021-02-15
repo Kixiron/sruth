@@ -93,7 +93,7 @@ mod tests {
                 input
             });
 
-            let mut program =
+            let (mut program, mut inline_heuristics) =
                 worker.dataflow_named::<Time, _, _>("constant propagation", |scope| {
                     let (instruction_trace, basic_block_trace, function_trace) = (
                         input_manager.instruction_trace.import(scope),
@@ -127,137 +127,80 @@ mod tests {
                     let function_descriptors =
                         function_trace.as_collection(|&id, func| (id, func.clone()));
 
-                    let program = scope.scoped::<Product<_, Time>, _, _>("optimization", |scope| {
-                        let variables = {
-                            let summary = Product::new(Default::default(), 1);
+                    let program = scope
+                        .scoped::<Product<_, Time>, _, _>("optimization", |scope| {
+                            let variables = {
+                                let summary = Product::new(Default::default(), 1);
 
-                            let instructions =
-                                Variable::new_from(instructions.enter(scope), summary);
-                            let block_instructions =
-                                Variable::new_from(block_instructions.enter(scope), summary);
-                            let block_terminators =
-                                Variable::new_from(block_terminators.enter(scope), summary);
-                            let block_descriptors =
-                                Variable::new_from(block_descriptors.enter(scope), summary);
-                            let function_blocks =
-                                Variable::new_from(function_blocks.enter(scope), summary);
-                            let function_descriptors =
-                                Variable::new_from(function_descriptors.enter(scope), summary);
+                                let instructions =
+                                    Variable::new_from(instructions.enter(scope), summary);
+                                let block_instructions =
+                                    Variable::new_from(block_instructions.enter(scope), summary);
+                                let block_terminators =
+                                    Variable::new_from(block_terminators.enter(scope), summary);
+                                let block_descriptors =
+                                    Variable::new_from(block_descriptors.enter(scope), summary);
+                                let function_blocks =
+                                    Variable::new_from(function_blocks.enter(scope), summary);
+                                let function_descriptors =
+                                    Variable::new_from(function_descriptors.enter(scope), summary);
 
-                            ProgramVariable::new(
-                                instructions,
-                                block_instructions,
-                                block_terminators,
-                                block_descriptors,
-                                function_blocks,
-                                function_descriptors,
-                            )
-                        };
+                                ProgramVariable::new(
+                                    instructions,
+                                    block_instructions,
+                                    block_terminators,
+                                    block_descriptors,
+                                    function_blocks,
+                                    function_descriptors,
+                                )
+                            };
 
-                        let mut program = variables.program();
+                            let mut program = variables.program();
 
-                        let (folded_instructions, folded_terminators) =
-                            constant_folding::constant_folding::<_, Diff>(
-                                scope,
-                                &program.instructions,
-                                &program.block_terminators,
-                            );
-                        program.instructions = folded_instructions;
-                        program.block_terminators = folded_terminators;
+                            let (folded_instructions, folded_terminators) =
+                                constant_folding::constant_folding::<_, Diff>(
+                                    scope,
+                                    &program.instructions,
+                                    &program.block_terminators,
+                                );
+                            program.instructions = folded_instructions;
+                            program.block_terminators = folded_terminators;
 
-                        program.instructions = peephole::peephole(scope, &program.instructions)
-                            .inspect(|x| println!("{:?}", x));
+                            program.instructions = peephole::peephole(scope, &program.instructions)
+                                .inspect(|x| println!("{:?}", x));
 
-                        program = program
-                            .cull_unreachable_blocks()
-                            .compact_basic_blocks()
-                            .cleanup();
+                            program = program
+                                .cull_unreachable_blocks()
+                                .compact_basic_blocks()
+                                .cleanup();
 
-                        program
-                            .instructions
-                            .inner
-                            .inspect_time(|t, _| println!("{:?}", t));
+                            program
+                                .instructions
+                                .inner
+                                .inspect_time(|t, _| println!("{:?}", t));
 
-                        let result = program.consolidate();
-                        variables.set(&result);
+                            let result = program.consolidate();
+                            variables.set(&result).leave()
+                        })
+                        .probe_with(&mut probe);
 
-                        result.leave()
-                    });
+                    let inline_heuristics = inline::harvest_heuristics(&program)
+                        .consolidate()
+                        .probe_with(&mut probe);
 
-                    program.arrange_by_key().trace()
+                    (
+                        program.arrange_by_key().trace(),
+                        inline_heuristics.arrange_by_key().trace,
+                    )
                 });
 
-            let (
-                mut instructions,
-                mut basic_blocks,
-                mut instructions_for_blocks,
-                mut terminators,
-                mut function_meta,
-                mut inline_heuristics,
-            ) = worker.dataflow_named("cull dead code", |scope| {
-                let arranged_program = program.import(scope);
-
-                let program = arranged_program.as_collection();
-                let inline_heuristics = inline::harvest_heuristics(&program)
-                    .consolidate()
-                    .probe_with(&mut probe)
-                    .arrange_by_key();
-
-                let instructions = program
-                    .instructions
-                    .consolidate()
-                    .probe_with(&mut probe)
-                    .arrange_by_key();
-                let basic_blocks = program
-                    .function_blocks
-                    .consolidate()
-                    .probe_with(&mut probe)
-                    .arrange_by_key();
-                let instructions_for_blocks = program
-                    .block_instructions
-                    .consolidate()
-                    .probe_with(&mut probe)
-                    .arrange_by_key();
-                let terminators = program
-                    .block_terminators
-                    .consolidate()
-                    .probe_with(&mut probe)
-                    .arrange_by_key();
-                let function_meta = program
-                    .function_descriptors
-                    .consolidate()
-                    .probe_with(&mut probe)
-                    .arrange_by_key();
-
-                (
-                    instructions.trace,
-                    basic_blocks.trace,
-                    instructions_for_blocks.trace,
-                    terminators.trace,
-                    function_meta.trace,
-                    inline_heuristics.trace,
-                )
-            });
-
             worker.dataflow_named("reconstruct ir", |scope| {
-                let (
-                    instructions,
-                    terminators,
-                    basic_blocks,
-                    instructions_for_blocks,
-                    function_descriptors,
-                    inline_heuristics,
-                ) = (
-                    instructions.import(scope),
-                    terminators.import(scope),
-                    basic_blocks.import(scope),
-                    instructions_for_blocks.import(scope),
-                    function_meta.import(scope),
-                    inline_heuristics.import(scope),
-                );
+                let (program, inline_heuristics) =
+                    (program.import(scope), inline_heuristics.import(scope));
 
-                let mut rebuilt_basic_blocks = instructions_for_blocks
-                    .join_core(&instructions, |_inst_id, &block, inst| {
+                let mut rebuilt_basic_blocks = program
+                    .block_instructions
+                    .join_core(&program.instructions, |_inst_id, &block, inst| {
                         iter::once((block, inst.to_owned()))
                     })
                     .reduce(|_, input, output| {
@@ -270,22 +213,26 @@ mod tests {
 
                         output.push((instructions, 1));
                     })
-                    .join_core(&terminators, |&block_id, instructions, term| {
-                        iter::once((
-                            block_id,
-                            BasicBlock {
-                                // TODO: Retain this info
-                                name: None,
-                                id: block_id,
-                                instructions: instructions.to_owned(),
-                                terminator: term.to_owned(),
-                            },
-                        ))
-                    });
+                    .join_core(
+                        &program.block_terminators,
+                        |&block_id, instructions, term| {
+                            iter::once((
+                                block_id,
+                                BasicBlock {
+                                    // TODO: Retain this info
+                                    name: None,
+                                    id: block_id,
+                                    instructions: instructions.to_owned(),
+                                    terminator: term.to_owned(),
+                                },
+                            ))
+                        },
+                    );
 
                 // Add back basic blocks with no instructions since they still have terminators
                 rebuilt_basic_blocks = rebuilt_basic_blocks.concat(
-                    &terminators
+                    &program
+                        .block_terminators
                         .as_collection(|&block, term| (block, term.clone()))
                         .antijoin(&rebuilt_basic_blocks.map(|(block, _)| block))
                         .map(|(block, terminator)| {
@@ -303,7 +250,7 @@ mod tests {
                 );
 
                 let basic_blocks = rebuilt_basic_blocks
-                    .join_core(&basic_blocks, |_block_id, block, &func| {
+                    .join_core(&program.function_blocks, |_block_id, block, &func| {
                         iter::once((func, block.clone()))
                     })
                     .consolidate()
@@ -321,7 +268,8 @@ mod tests {
                     (func, Metadata::new(Some(heuristics.clone())))
                 });
 
-                let functions = function_descriptors
+                let functions = program
+                    .function_descriptors
                     .as_collection(|&func_id, meta| (func_id, meta.clone()))
                     .join(&function_metadata)
                     .join_map(&basic_blocks, |&func_id, (desc, metadata), blocks| {
@@ -365,6 +313,7 @@ mod tests {
                     .map(Ok)
                     .concat(&errors)
                     .distinct_core::<Diff>()
+                    .probe_with(&mut probe)
                     .inner
                     .capture_into(CrossbeamPusher::new(sender.clone()));
             });
@@ -447,7 +396,7 @@ mod tests {
             trace_manager.advance_by(frontier);
             trace_manager.distinguish_since(frontier);
 
-            worker.step_while(|| !probe.less_than(input_manager.time()));
+            worker.step_while(|| probe.less_than(input_manager.time()));
         })
         .unwrap();
 

@@ -81,6 +81,7 @@ pub trait ManagedTrace<T>: Any {
 
     fn distinguish_since(&mut self, frontier: AntichainRef<'_, T>);
 
+    #[inline]
     fn inner_type_id(&self) -> TypeId {
         TypeId::of::<Self>()
     }
