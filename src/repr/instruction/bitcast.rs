@@ -1,6 +1,6 @@
 use crate::repr::{
     utils::{DisplayCtx, IRDisplay, InstructionPurity},
-    InstructionExt, Type, VarId,
+    InstructionExt, Type, Value, VarId,
 };
 use abomonation_derive::Abomonation;
 use lasso::Resolver;
@@ -45,15 +45,6 @@ impl Bitcast {
     pub fn is_redundant(&self) -> bool {
         self.dest_ty == self.source_ty
     }
-
-    pub fn replace_uses(&mut self, from: VarId, to: VarId) -> bool {
-        if self.source == from {
-            self.source = to;
-            true
-        } else {
-            false
-        }
-    }
 }
 
 impl InstructionExt for Bitcast {
@@ -67,6 +58,21 @@ impl InstructionExt for Bitcast {
 
     fn purity(&self) -> InstructionPurity {
         InstructionPurity::Pure
+    }
+
+    fn estimated_instructions(&self) -> usize {
+        0
+    }
+
+    fn replace_uses(&mut self, from: VarId, to: Value) -> bool {
+        if let Some(to) = to.as_var() {
+            if self.source == from {
+                self.source = to;
+                return true;
+            }
+        }
+
+        false
     }
 }
 

@@ -1,4 +1,4 @@
-use crate::repr::{instruction::VarId, Type};
+use crate::repr::{instruction::VarId, Type, Value};
 use abomonation::Abomonation;
 use abomonation_derive::Abomonation;
 use lasso::{Resolver, Spur};
@@ -61,6 +61,11 @@ pub trait InstructionExt: IRDisplay {
     fn dest_type(&self) -> Type;
 
     fn purity(&self) -> InstructionPurity;
+
+    // TODO: Add target arch
+    fn estimated_instructions(&self) -> usize;
+
+    fn replace_uses(&mut self, from: VarId, to: Value) -> bool;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]

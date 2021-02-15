@@ -3,8 +3,8 @@ use crate::{
     repr::{
         instruction::{Add, Assign, BinopExt, Call, Div, Mul, Sub},
         terminator::Return,
-        BasicBlockId, Cast, Constant, InstId, Instruction, RawCast, Terminator, Type, Value,
-        ValueKind, VarId,
+        BasicBlockId, Cast, Constant, InstId, Instruction, InstructionExt, RawCast, Terminator,
+        Type, Value, ValueKind, VarId,
     },
 };
 use differential_dataflow::{
@@ -539,10 +539,13 @@ where
             );
         });
 
-    let use_sites = instructions.collect_usages().join_map(
-        &redundant_assignments.map(|(_, (from, to))| (from, to)),
-        |&from, &inst, &to| (inst, (from, to)),
-    );
+    let use_sites = instructions
+        .collect_usages()
+        .map(|(var, inst)| (var.var, (var.ty, inst)))
+        .join_map(
+            &redundant_assignments.map(|(_, (from, to))| (from, to)),
+            |&from, &(ref ty, inst), &to| (inst, (from, Value::new(to.into(), ty.clone()))),
+        );
 
     let rewritten_instructions = instructions
         .join_map(&use_sites, |&id, inst, &(from, to)| {

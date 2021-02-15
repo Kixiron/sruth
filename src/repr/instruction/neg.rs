@@ -21,17 +21,6 @@ impl Neg {
     pub const fn is_const(&self) -> bool {
         self.value.is_const()
     }
-
-    pub fn replace_uses(&mut self, from: VarId, to: VarId) -> bool {
-        if let Some(var) = self.value.as_var_mut() {
-            if *var == from {
-                *var = to;
-                return true;
-            }
-        }
-
-        false
-    }
 }
 
 impl InstructionExt for Neg {
@@ -45,6 +34,21 @@ impl InstructionExt for Neg {
 
     fn purity(&self) -> InstructionPurity {
         InstructionPurity::Pure
+    }
+
+    fn estimated_instructions(&self) -> usize {
+        1
+    }
+
+    fn replace_uses(&mut self, from: VarId, to: Value) -> bool {
+        if let Some(var) = self.value.as_var() {
+            if var == from {
+                self.value = to;
+                return true;
+            }
+        }
+
+        false
     }
 }
 

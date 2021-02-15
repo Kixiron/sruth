@@ -21,26 +21,6 @@ impl Cmp {
     pub const fn is_const(&self) -> bool {
         self.rhs.is_const() && self.lhs.is_const()
     }
-
-    pub fn replace_uses(&mut self, from: VarId, to: VarId) -> bool {
-        let mut replaced = false;
-
-        if let Some(var) = self.lhs.as_var_mut() {
-            if *var == from {
-                *var = to;
-                replaced = true
-            }
-        }
-
-        if let Some(var) = self.rhs.as_var_mut() {
-            if *var == from {
-                *var = to;
-                replaced = true
-            }
-        }
-
-        replaced
-    }
 }
 
 impl InstructionExt for Cmp {
@@ -54,6 +34,30 @@ impl InstructionExt for Cmp {
 
     fn purity(&self) -> InstructionPurity {
         InstructionPurity::Pure
+    }
+
+    fn estimated_instructions(&self) -> usize {
+        1
+    }
+
+    fn replace_uses(&mut self, from: VarId, to: Value) -> bool {
+        let mut replaced = false;
+
+        if let Some(var) = self.lhs.as_var() {
+            if var == from {
+                self.lhs = to;
+                replaced = true
+            }
+        }
+
+        if let Some(var) = self.rhs.as_var() {
+            if var == from {
+                self.rhs = to;
+                replaced = true
+            }
+        }
+
+        replaced
     }
 }
 

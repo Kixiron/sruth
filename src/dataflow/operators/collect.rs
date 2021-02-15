@@ -1,4 +1,6 @@
-use crate::repr::{Cast, InstId, Instruction, InstructionExt, RawCast, Type, Value, VarId};
+use crate::repr::{
+    instruction::TypedVar, Cast, InstId, Instruction, InstructionExt, RawCast, Type, Value, VarId,
+};
 use differential_dataflow::{difference::Semigroup, Collection, Data};
 use timely::dataflow::Scope;
 
@@ -19,7 +21,7 @@ where
     S: Scope,
     R: Semigroup,
 {
-    type Output = Collection<S, (VarId, InstId), R>;
+    type Output = Collection<S, (TypedVar, InstId), R>;
 
     fn collect_usages_named(&self, name: &str) -> Self::Output {
         self.scope().region_named(name, |region| {

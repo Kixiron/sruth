@@ -45,11 +45,11 @@ impl Instruction {
     }
 
     // TODO: Make this a method on InstructionExt
-    pub fn used_vars(&self) -> Vec<VarId> {
+    pub fn used_vars(&self) -> Vec<TypedVar> {
         match self {
             Self::Assign(assign) => {
                 if let Some(val) = assign.value.as_var() {
-                    vec![val]
+                    vec![TypedVar::new(val, assign.value.ty.clone())]
                 } else {
                     Vec::new()
                 }
@@ -186,15 +186,6 @@ macro_rules! impl_instruction {
             }
         )*
 
-        impl Instruction {
-            // TODO: Make this a method on InstructionExt
-            pub fn replace_uses(&mut self, from: VarId, to: VarId) -> bool {
-                match self {
-                    $(Self::$type(value) => value.replace_uses(from, to),)*
-                }
-            }
-        }
-
         impl InstructionExt for Instruction {
             fn dest(&self) -> VarId {
                 match self {
@@ -211,6 +202,18 @@ macro_rules! impl_instruction {
             fn purity(&self) -> InstructionPurity {
                 match self {
                     $(Self::$type(value) => value.purity(),)*
+                }
+            }
+
+            fn estimated_instructions(&self) -> usize {
+                match self {
+                    $(Self::$type(value) => value.estimated_instructions(),)*
+                }
+            }
+
+            fn replace_uses(&mut self, from: VarId, to: Value) -> bool {
+                match self {
+                    $(Self::$type(value) => value.replace_uses(from, to),)*
                 }
             }
         }

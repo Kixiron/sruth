@@ -24,19 +24,6 @@ impl Call {
         }
     }
 
-    pub fn replace_uses(&mut self, from: VarId, to: VarId) -> bool {
-        let mut replaced = false;
-
-        for var in self.args.iter_mut().filter_map(|var| var.as_var_mut()) {
-            if *var == from {
-                *var = to;
-                replaced = true;
-            }
-        }
-
-        replaced
-    }
-
     pub fn used_vars(&self) -> Vec<VarId> {
         self.args.iter().filter_map(|arg| arg.as_var()).collect()
     }
@@ -62,6 +49,25 @@ impl InstructionExt for Call {
     // TODO
     fn purity(&self) -> InstructionPurity {
         InstructionPurity::Maybe
+    }
+
+    fn estimated_instructions(&self) -> usize {
+        5
+    }
+
+    fn replace_uses(&mut self, from: VarId, to: Value) -> bool {
+        let mut replaced = false;
+
+        for value in self.args.iter_mut() {
+            if let Some(var) = value.as_var() {
+                if var == from {
+                    *value = to;
+                    replaced = true;
+                }
+            }
+        }
+
+        replaced
     }
 }
 
