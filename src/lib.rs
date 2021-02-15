@@ -38,7 +38,7 @@ mod tests {
     use std::{io, iter, sync::Arc};
     use timely::{
         dataflow::{
-            operators::{capture::Extract, Capture, Inspect},
+            operators::{capture::Extract, Capture},
             ProbeHandle, Scope,
         },
         order::Product,
@@ -166,21 +166,17 @@ mod tests {
                             program.instructions = folded_instructions;
                             program.block_terminators = folded_terminators;
 
-                            program.instructions = peephole::peephole(scope, &program.instructions)
-                                .inspect(|x| println!("{:?}", x));
+                            program.instructions = peephole::peephole(scope, &program.instructions);
 
                             program = program
                                 .cull_unreachable_blocks()
                                 .compact_basic_blocks()
                                 .cleanup();
 
-                            program
-                                .instructions
-                                .inner
-                                .inspect_time(|t, _| println!("{:?}", t));
-
                             let result = program.consolidate();
-                            variables.set(&result).leave()
+                            variables.set(&result);
+
+                            result.leave()
                         })
                         .probe_with(&mut probe);
 
@@ -394,7 +390,7 @@ mod tests {
 
             let frontier = AntichainRef::new(&[1]);
             trace_manager.advance_by(frontier);
-            trace_manager.distinguish_since(frontier);
+            trace_manager.distinguish_since(AntichainRef::new(&[]));
 
             worker.step_while(|| probe.less_than(input_manager.time()));
         })

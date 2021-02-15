@@ -1,10 +1,7 @@
 use crate::{
-    dataflow::{
-        operators::{CollectCastable, CollectUsages, FilterMap, FilterSplit},
-        Time,
-    },
+    dataflow::operators::{CollectCastable, CollectUsages, FilterMap, FilterSplit},
     repr::{
-        instruction::{Add, Assign, BinopExt, Div, Mul, Sub},
+        instruction::{Add, Assign, BinopExt, Call, Div, Mul, Sub},
         terminator::Return,
         BasicBlockId, Cast, Constant, InstId, Instruction, RawCast, Terminator, Type, Value,
         ValueKind, VarId,
@@ -13,17 +10,14 @@ use crate::{
 use differential_dataflow::{
     difference::{Monoid, Semigroup},
     lattice::Lattice,
-    operators::{consolidate::ConsolidateStream, iterate::Variable, Consolidate, Join},
+    operators::{consolidate::ConsolidateStream, Consolidate, Join, Reduce},
     AsCollection, Collection, Data, ExchangeData,
 };
 use std::{
     convert::TryInto,
     ops::{Mul as OpsMul, Neg},
 };
-use timely::{
-    dataflow::{operators::Partition, Scope, Stream},
-    order::Product,
-};
+use timely::dataflow::{operators::Partition, Scope, Stream};
 
 type ConstProp<S, R> = (
     Collection<S, (InstId, Instruction), R>,
@@ -31,7 +25,7 @@ type ConstProp<S, R> = (
 );
 
 pub fn constant_folding<S, R>(
-    scope: &mut S,
+    _scope: &mut S,
     instructions: &Collection<S, (InstId, Instruction), R>,
     terminators: &Collection<S, (BasicBlockId, Terminator), R>,
 ) -> ConstProp<S, R>
@@ -42,75 +36,48 @@ where
 {
     let span = tracing::debug_span!("constant folding");
     span.in_scope(|| {
-        let seed_constants = instructions.filter_map(|(_, inst)| {
+        let constants = instructions.filter_map(|(_, inst)| {
             inst.cast().and_then(|Assign { value, dest, .. }| {
                 let (value, ty) = value.split();
                 value.into_const().map(|constant| (dest, (constant, ty)))
             })
         });
 
-        let (instructions, terminators) =
-            scope.scoped::<Product<_, Time>, _, _>("iterative constant propagation", |nested| {
-                let instructions = Variable::new_from(
-                    instructions.enter(nested),
-                    Product::new(Default::default(), 1),
-                );
-                let constants = Variable::new_from(
-                    seed_constants.enter(nested),
-                    Product::new(Default::default(), 1),
-                );
-                let terminators = Variable::new_from(
-                    terminators.enter(nested),
-                    Product::new(Default::default(), 1),
-                );
+        // Evaluate binary operations
+        let evaluated_binops = evalutate_binary_op::<_, Add, _>(&instructions, &constants)
+            .concat(&evalutate_binary_op::<_, Sub, _>(&instructions, &constants))
+            .concat(&evalutate_binary_op::<_, Mul, _>(&instructions, &constants))
+            .concat(&evalutate_binary_op::<_, Div, _>(&instructions, &constants));
 
-                // Evaluate binary operations
-                let evaluated_binops = evalutate_binary_op::<_, Add, _>(&instructions, &constants)
-                    .concat(&evalutate_binary_op::<_, Sub, _>(&instructions, &constants))
-                    .concat(&evalutate_binary_op::<_, Mul, _>(&instructions, &constants))
-                    .concat(&evalutate_binary_op::<_, Div, _>(&instructions, &constants));
+        // Replace the instructions we've modified
+        let new_instructions = instructions
+            .antijoin(&evaluated_binops.map(|(id, _)| id))
+            .concat(&evaluated_binops);
 
-                // Replace the instructions we've modified
-                let new_instructions = instructions
-                    .antijoin(&evaluated_binops.map(|(id, _)| id))
-                    .concat(&evaluated_binops);
+        // Add the newly derived constants to the stream of constants
+        let new_constants = new_instructions
+            .collect_castable::<Assign>()
+            .filter_map(|(_, assign)| {
+                let (value, ty) = assign.value.split();
+                let dest = assign.dest;
 
-                // Add the newly derived constants to the stream of constants
-                let new_constants = new_instructions
-                    .collect_castable::<Assign>()
-                    .filter_map(|(_, assign)| {
-                        let (value, ty) = assign.value.split();
-                        let dest = assign.dest;
+                value
+                    .into_const()
+                    .map(move |constant| (dest, (constant, ty)))
+            })
+            .consolidate();
 
-                        value
-                            .into_const()
-                            .map(move |constant| (dest, (constant, ty)))
-                    })
-                    .consolidate();
+        let promoted_instructions = promote_constants(&new_instructions, &new_constants);
 
-                let promoted_instructions = promote_constants(&new_instructions, &new_constants);
+        let folded_terminators =
+            propagate_to_terminators(&terminators, &new_constants).consolidate();
 
-                let folded_terminators =
-                    propagate_to_terminators(&terminators, &new_constants).consolidate();
+        let (eliminated_instructions, eliminated_terminators) = eliminate_redundant_assigns(
+            &promoted_instructions.consolidate(),
+            &folded_terminators.consolidate(),
+        );
 
-                let (eliminated_instructions, eliminated_terminators) = eliminate_redundant_assigns(
-                    &promoted_instructions.consolidate(),
-                    &folded_terminators.consolidate(),
-                );
-
-                constants.set(&new_constants);
-
-                (
-                    instructions
-                        .set(&eliminated_instructions.consolidate())
-                        .leave(),
-                    terminators
-                        .set(&eliminated_terminators.consolidate())
-                        .leave(),
-                )
-            });
-
-        (instructions, terminators)
+        (eliminated_instructions, eliminated_terminators)
     })
 }
 
@@ -203,16 +170,63 @@ fn promote_constants<S, R>(
 where
     S: Scope,
     S::Timestamp: Lattice,
-    R: Semigroup + Monoid + ExchangeData + OpsMul<Output = R> + Neg<Output = R>,
+    R: Semigroup + Monoid + ExchangeData + OpsMul<Output = R> + Neg<Output = R> + From<i8>,
 {
     let promoted_binops = promote_binop::<_, Add, _>(instructions, constants)
         .concat(&promote_binop::<_, Sub, _>(instructions, constants))
         .concat(&promote_binop::<_, Mul, _>(instructions, constants))
-        .concat(&promote_binop::<_, Div, _>(instructions, constants));
+        .concat(&promote_binop::<_, Div, _>(instructions, constants))
+        .concat(&promote_function_args(instructions, constants));
 
     instructions
         .antijoin(&promoted_binops.map(|(id, _)| id))
         .concat(&promoted_binops)
+}
+
+fn promote_function_args<S, R>(
+    instructions: &Collection<S, (InstId, Instruction), R>,
+    constants: &Collection<S, (VarId, (Constant, Type)), R>,
+) -> Collection<S, (InstId, Instruction), R>
+where
+    S: Scope,
+    S::Timestamp: Lattice,
+    R: Semigroup + Monoid + ExchangeData + OpsMul<Output = R> + Neg<Output = R> + From<i8>,
+{
+    let calls = instructions.collect_castable::<Call>();
+
+    let const_args = calls
+        .flat_map(|(id, call)| {
+            call.args
+                .into_iter()
+                .filter_map(move |arg| arg.as_var().map(move |var| (var, id)))
+        })
+        .join_map(&constants, |&var, &inst, constant| {
+            (inst, (var, constant.clone()))
+        })
+        .consolidate()
+        .reduce(|_, args, output| {
+            let args: Vec<_> = args
+                .iter()
+                .map(|&(&(var, (ref constant, ref ty)), _)| (var, (constant.clone(), ty.clone())))
+                .collect();
+
+            output.push((args, R::from(1)));
+        });
+
+    calls.join_map(&const_args, |&inst, call, args| {
+        let (mut call, mut args) = (call.clone(), args.clone());
+
+        for val in call.args.iter_mut() {
+            if let Some(var) = val.as_var() {
+                if let Some(idx) = args.iter().position(|&(arg, _)| arg == var) {
+                    let (_, (constant, ty)) = args.remove(idx);
+                    *val = Value::new(constant.into(), ty);
+                }
+            }
+        }
+
+        (inst, Instruction::Call(call))
+    })
 }
 
 fn promote_binop<S, T, R>(
@@ -222,9 +236,9 @@ fn promote_binop<S, T, R>(
 where
     S: Scope,
     S::Timestamp: Lattice,
+    R: Semigroup + Monoid + ExchangeData + OpsMul<Output = R> + Neg<Output = R>,
     T: ExchangeData + BinopExt + Into<Instruction>,
     Instruction: RawCast<T>,
-    R: Semigroup + Monoid + ExchangeData + OpsMul<Output = R> + Neg<Output = R>,
 {
     // TODO: Partition for collections
     let [lhs_var, rhs_var, both_var, _]: [Stream<_, _>; 4] = instructions

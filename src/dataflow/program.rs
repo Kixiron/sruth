@@ -1,3 +1,5 @@
+use std::panic::Location;
+
 use crate::repr::{
     basic_block::BasicBlockMeta, function::FunctionMeta, BasicBlockId, FuncId, InstId, Instruction,
     Terminator,
@@ -11,7 +13,7 @@ use differential_dataflow::{
         Consolidate,
     },
     trace::implementations::ord::OrdValSpine,
-    Collection, ExchangeData,
+    Collection, ExchangeData, Hashable,
 };
 use timely::{
     dataflow::{operators::probe::Handle, scopes::Child, Scope},
@@ -113,6 +115,76 @@ where
             block_descriptors: self.block_descriptors.probe_with(handle),
             function_blocks: self.function_blocks.probe_with(handle),
             function_descriptors: self.function_descriptors.probe_with(handle),
+        }
+    }
+
+    pub fn assert_eq(&self, other: &Self)
+    where
+        S::Timestamp: Lattice,
+        R: Abelian + ExchangeData + Hashable,
+    {
+        self.instructions.assert_eq(&other.instructions);
+        self.block_instructions.assert_eq(&other.block_instructions);
+        self.block_terminators.assert_eq(&other.block_terminators);
+        self.block_descriptors.assert_eq(&other.block_descriptors);
+        self.function_blocks.assert_eq(&other.function_blocks);
+        self.function_descriptors
+            .assert_eq(&other.function_descriptors);
+    }
+
+    #[track_caller]
+    pub fn debug(&self) -> Self {
+        let location = Location::caller();
+
+        Self {
+            instructions: self.instructions.inspect(move |x| {
+                println!(
+                    "[{}:{}] instructions: {:?}",
+                    location.file(),
+                    location.line(),
+                    x,
+                );
+            }),
+            block_instructions: self.block_instructions.inspect(move |x| {
+                println!(
+                    "[{}:{}] block instructions: {:?}",
+                    location.file(),
+                    location.line(),
+                    x,
+                );
+            }),
+            block_terminators: self.block_terminators.inspect(move |x| {
+                println!(
+                    "[{}:{}] block terminators: {:?}",
+                    location.file(),
+                    location.line(),
+                    x,
+                );
+            }),
+            block_descriptors: self.block_descriptors.inspect(move |x| {
+                println!(
+                    "[{}:{}] block descriptors: {:?}",
+                    location.file(),
+                    location.line(),
+                    x,
+                );
+            }),
+            function_blocks: self.function_blocks.inspect(move |x| {
+                println!(
+                    "[{}:{}] function blocks: {:?}",
+                    location.file(),
+                    location.line(),
+                    x,
+                );
+            }),
+            function_descriptors: self.function_descriptors.inspect(move |x| {
+                println!(
+                    "[{}:{}] function descriptors: {:?}",
+                    location.file(),
+                    location.line(),
+                    x,
+                );
+            }),
         }
     }
 }
