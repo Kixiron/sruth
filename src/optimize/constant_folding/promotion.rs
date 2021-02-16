@@ -14,7 +14,7 @@ use timely::dataflow::Scope;
 /// Promote constant values to an inline position, turing operations that depend on
 /// statically known values via variables into operations with constant immediates
 ///
-/// ```
+/// ```ignore
 /// foo := uint 3
 /// add uint foo, uint 10
 ///

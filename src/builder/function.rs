@@ -1,19 +1,19 @@
 use crate::{
     builder::{
-        block::IncompleteBasicBlock, BasicBlockBuilder, BuildResult, BuilderError, Context,
-        EffectEdge,
+        block::{DeferredBasicBlock, IncompleteBasicBlock},
+        BasicBlockBuilder, BuildResult, BuilderError, Context, EffectEdge,
     },
     repr::{
-        basic_block::BasicBlockMeta, function::FunctionDesc, BasicBlockId, FuncId, Ident, InstId,
+        basic_block::BasicBlockDesc, function::FunctionDesc, BasicBlockId, FuncId, Ident, InstId,
         Instruction, Type, TypedVar,
     },
 };
-use std::{convert::TryInto, mem, thread};
+use std::{convert::TryInto, mem, ops::Deref, thread};
 
 #[derive(Debug)]
 pub struct FunctionBuilder<'a> {
     pub(super) meta: IncompleteFunction,
-    pub(super) blocks: &'a mut Vec<BasicBlockMeta>,
+    pub(super) blocks: &'a mut Vec<BasicBlockDesc>,
     pub(super) functions: &'a mut Vec<FunctionDesc>,
     pub(super) instructions: &'a mut Vec<(InstId, Instruction)>,
     pub(super) effect_edges: &'a mut Vec<EffectEdge>,
@@ -27,7 +27,7 @@ impl<'a> FunctionBuilder<'a> {
     where
         F: FnOnce(&mut BasicBlockBuilder<'_, '_>) -> BuildResult<()>,
     {
-        self.build_basic_block(None, build)
+        self.build_basic_block(None, None, build)
     }
 
     pub fn named_basic_block<N, F>(&mut self, name: N, build: F) -> BuildResult<BasicBlockId>
@@ -36,7 +36,37 @@ impl<'a> FunctionBuilder<'a> {
         F: FnOnce(&mut BasicBlockBuilder<'_, '_>) -> BuildResult<()>,
     {
         let name = Ident::new(self.context.interner.get_or_intern(name));
-        self.build_basic_block(Some(name), build)
+
+        self.build_basic_block(None, Some(name), build)
+    }
+
+    pub fn allocate_basic_block(&mut self) -> DeferredBasicBlock {
+        DeferredBasicBlock::new(self.context.block_id(), None)
+    }
+
+    pub fn allocate_named_basic_block<N>(&mut self, name: N) -> DeferredBasicBlock
+    where
+        N: AsRef<str>,
+    {
+        let name = Ident::new(self.context.interner.get_or_intern(name));
+        DeferredBasicBlock::new(self.context.block_id(), Some(name))
+    }
+
+    pub fn resume_building<F>(
+        &mut self,
+        mut block: DeferredBasicBlock,
+        build: F,
+    ) -> BuildResult<BasicBlockId>
+    where
+        F: FnOnce(&mut BasicBlockBuilder<'_, '_>) -> BuildResult<()>,
+    {
+        debug_assert!(
+            !block.finished,
+            "a deferred block was somehow finished twice",
+        );
+        block.finished = true;
+
+        self.build_basic_block(Some(block.id), block.name, build)
     }
 
     pub const fn name(&self) -> Option<Ident> {
@@ -92,7 +122,7 @@ impl<'a> FunctionBuilder<'a> {
 impl<'a> FunctionBuilder<'a> {
     pub(super) fn new(
         meta: IncompleteFunction,
-        blocks: &'a mut Vec<BasicBlockMeta>,
+        blocks: &'a mut Vec<BasicBlockDesc>,
         functions: &'a mut Vec<FunctionDesc>,
         instructions: &'a mut Vec<(InstId, Instruction)>,
         effect_edges: &'a mut Vec<EffectEdge>,
@@ -109,13 +139,18 @@ impl<'a> FunctionBuilder<'a> {
         }
     }
 
-    fn build_basic_block<F>(&mut self, name: Option<Ident>, build: F) -> BuildResult<BasicBlockId>
+    fn build_basic_block<F>(
+        &mut self,
+        id: Option<BasicBlockId>,
+        name: Option<Ident>,
+        build: F,
+    ) -> BuildResult<BasicBlockId>
     where
         F: FnOnce(&mut BasicBlockBuilder<'_, '_>) -> BuildResult<()>,
     {
         let span = tracing::trace_span!("building basic block");
         span.in_scope(|| {
-            let id = self.context.block_id();
+            let id = id.unwrap_or_else(|| self.context.block_id());
 
             if let Some(name) = name {
                 tracing::trace!(
@@ -183,6 +218,42 @@ impl Drop for FunctionBuilder<'_> {
 
             self.finish_inner()
                 .expect("failed to finish function construction");
+        }
+    }
+}
+
+#[derive(Debug)]
+#[must_use = "Dropping a deferred function without completing it will panic"]
+pub struct DeferredFunction {
+    pub(super) name: Option<Ident>,
+    pub(super) id: FuncId,
+    pub(super) return_ty: Type,
+    pub(super) finished: bool,
+}
+
+impl DeferredFunction {
+    pub(super) const fn new(id: FuncId, name: Option<Ident>, return_ty: Type) -> Self {
+        Self {
+            name,
+            id,
+            return_ty,
+            finished: false,
+        }
+    }
+}
+
+impl Deref for DeferredFunction {
+    type Target = FuncId;
+
+    fn deref(&self) -> &Self::Target {
+        &self.id
+    }
+}
+
+impl Drop for DeferredFunction {
+    fn drop(&mut self) {
+        if !thread::panicking() && !self.finished {
+            panic!("dropped an allocated function without completing it");
         }
     }
 }

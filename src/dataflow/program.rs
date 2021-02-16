@@ -1,7 +1,7 @@
 use std::panic::Location;
 
 use crate::repr::{
-    basic_block::BasicBlockMeta, function::FunctionDesc, BasicBlockId, FuncId, InstId, Instruction,
+    basic_block::BasicBlockDesc, function::FunctionDesc, BasicBlockId, FuncId, InstId, Instruction,
     Terminator,
 };
 use differential_dataflow::{
@@ -29,7 +29,7 @@ where
     pub instructions: Collection<S, (InstId, Instruction), R>,
     pub block_instructions: Collection<S, (InstId, BasicBlockId), R>,
     pub block_terminators: Collection<S, (BasicBlockId, Terminator), R>,
-    pub block_descriptors: Collection<S, (BasicBlockId, BasicBlockMeta), R>,
+    pub block_descriptors: Collection<S, (BasicBlockId, BasicBlockDesc), R>,
     pub function_blocks: Collection<S, (BasicBlockId, FuncId), R>,
     pub function_descriptors: Collection<S, (FuncId, FunctionDesc), R>,
 }
@@ -43,7 +43,7 @@ where
         instructions: Collection<S, (InstId, Instruction), R>,
         block_instructions: Collection<S, (InstId, BasicBlockId), R>,
         block_terminators: Collection<S, (BasicBlockId, Terminator), R>,
-        block_descriptors: Collection<S, (BasicBlockId, BasicBlockMeta), R>,
+        block_descriptors: Collection<S, (BasicBlockId, BasicBlockDesc), R>,
         function_blocks: Collection<S, (BasicBlockId, FuncId), R>,
         function_descriptors: Collection<S, (FuncId, FunctionDesc), R>,
     ) -> Self {
@@ -269,7 +269,7 @@ where
     pub instructions: Variable<S, (InstId, Instruction), R>,
     pub block_instructions: Variable<S, (InstId, BasicBlockId), R>,
     pub block_terminators: Variable<S, (BasicBlockId, Terminator), R>,
-    pub block_descriptors: Variable<S, (BasicBlockId, BasicBlockMeta), R>,
+    pub block_descriptors: Variable<S, (BasicBlockId, BasicBlockDesc), R>,
     pub function_blocks: Variable<S, (BasicBlockId, FuncId), R>,
     pub function_descriptors: Variable<S, (FuncId, FunctionDesc), R>,
 }
@@ -284,7 +284,7 @@ where
         instructions: Variable<S, (InstId, Instruction), R>,
         block_instructions: Variable<S, (InstId, BasicBlockId), R>,
         block_terminators: Variable<S, (BasicBlockId, Terminator), R>,
-        block_descriptors: Variable<S, (BasicBlockId, BasicBlockMeta), R>,
+        block_descriptors: Variable<S, (BasicBlockId, BasicBlockDesc), R>,
         function_blocks: Variable<S, (BasicBlockId, FuncId), R>,
         function_descriptors: Variable<S, (FuncId, FunctionDesc), R>,
     ) -> Self {
@@ -350,7 +350,7 @@ where
     pub block_terminators:
         Arranged<S, TraceAgent<OrdValSpine<BasicBlockId, Terminator, S::Timestamp, R>>>,
     pub block_descriptors:
-        Arranged<S, TraceAgent<OrdValSpine<BasicBlockId, BasicBlockMeta, S::Timestamp, R>>>,
+        Arranged<S, TraceAgent<OrdValSpine<BasicBlockId, BasicBlockDesc, S::Timestamp, R>>>,
     pub function_blocks:
         Arranged<S, TraceAgent<OrdValSpine<BasicBlockId, FuncId, S::Timestamp, R>>>,
     pub function_descriptors:
@@ -407,7 +407,7 @@ where
     pub instructions: TraceAgent<OrdValSpine<InstId, Instruction, T, R>>,
     pub block_instructions: TraceAgent<OrdValSpine<InstId, BasicBlockId, T, R>>,
     pub block_terminators: TraceAgent<OrdValSpine<BasicBlockId, Terminator, T, R>>,
-    pub block_descriptors: TraceAgent<OrdValSpine<BasicBlockId, BasicBlockMeta, T, R>>,
+    pub block_descriptors: TraceAgent<OrdValSpine<BasicBlockId, BasicBlockDesc, T, R>>,
     pub function_blocks: TraceAgent<OrdValSpine<BasicBlockId, FuncId, T, R>>,
     pub function_descriptors: TraceAgent<OrdValSpine<FuncId, FunctionDesc, T, R>>,
 }

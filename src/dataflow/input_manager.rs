@@ -1,5 +1,5 @@
 use crate::repr::{
-    basic_block::BasicBlockMeta, function::FunctionDesc, BasicBlockId, FuncId, InstId, Instruction,
+    basic_block::BasicBlockDesc, function::FunctionDesc, BasicBlockId, FuncId, InstId, Instruction,
 };
 use differential_dataflow::{
     difference::{Abelian, Semigroup},
@@ -23,8 +23,8 @@ where
     pub instructions: InputSession<T, (InstId, Instruction), R>,
     pub instruction_trace: TraceAgent<OrdValSpine<InstId, Instruction, T, R>>,
 
-    pub basic_blocks: InputSession<T, (BasicBlockId, BasicBlockMeta), R>,
-    pub basic_block_trace: TraceAgent<OrdValSpine<BasicBlockId, BasicBlockMeta, T, R>>,
+    pub basic_blocks: InputSession<T, (BasicBlockId, BasicBlockDesc), R>,
+    pub basic_block_trace: TraceAgent<OrdValSpine<BasicBlockId, BasicBlockDesc, T, R>>,
 
     pub functions: InputSession<T, (FuncId, FunctionDesc), R>,
     pub function_trace: TraceAgent<OrdValSpine<FuncId, FunctionDesc, T, R>>,
@@ -44,7 +44,7 @@ where
 
         let (instructions, instruction_trace) = scope.new_collection::<(InstId, Instruction), R>();
         let (basic_blocks, basic_block_trace) =
-            scope.new_collection::<(BasicBlockId, BasicBlockMeta), R>();
+            scope.new_collection::<(BasicBlockId, BasicBlockDesc), R>();
         let (functions, function_trace) = scope.new_collection::<(FuncId, FunctionDesc), R>();
 
         // TODO: Exchange more intelligently to put all blocks & instructions for

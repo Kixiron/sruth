@@ -1,7 +1,7 @@
 use crate::{
     dataflow::InputManager,
     repr::{
-        basic_block::BasicBlockMeta,
+        basic_block::BasicBlockDesc,
         function::FunctionDesc,
         utils::{DisplayCtx, IRDisplay},
         Function, InstId,
@@ -52,7 +52,7 @@ where
                     .update((inst_id, instruction), R::from(1));
             }
 
-            let meta = BasicBlockMeta::new(
+            let meta = BasicBlockDesc::new(
                 basic_block.name,
                 basic_block.id,
                 instructions,

@@ -6,7 +6,7 @@ use crate::{
         FilterMap, FilterSplit,
     },
     repr::{
-        basic_block::BasicBlockMeta,
+        basic_block::BasicBlockDesc,
         function::FunctionDesc,
         instruction::{BinaryOp, Bitcast},
         BasicBlockId, Cast, Constant, FuncId, InstId, Instruction, InstructionExt, Type, TypedVar,
@@ -35,7 +35,7 @@ use timely::dataflow::Scope;
 pub fn verify<S, R>(
     scope: &mut S,
     instructions: &Collection<S, (InstId, Instruction), R>,
-    basic_blocks: &Collection<S, (BasicBlockId, BasicBlockMeta), R>,
+    basic_blocks: &Collection<S, (BasicBlockId, BasicBlockDesc), R>,
     functions: &Collection<S, (FuncId, FunctionDesc), R>,
 ) -> Collection<S, ValidityError, R>
 where

@@ -316,38 +316,31 @@ mod tests {
 
             if worker.index() == 0 {
                 let mut builder = moved_context.builder();
-                let add_uint = builder
-                    .named_function("add_uint", Type::Uint, |func| {
-                        let lhs = func.param(Type::Uint);
-                        let rhs = func.param(Type::Uint);
 
-                        func.basic_block(|block| {
-                            let sum = block.add(lhs, rhs)?;
-                            block.ret(sum)?;
-
-                            Ok(())
-                        })?;
-
-                        Ok(())
-                    })
-                    .unwrap();
+                let add_uint = builder.allocate_named_function("add_uint", Type::Uint);
 
                 builder
                     .named_function("cross_branch_propagation", Type::Uint, |func| {
                         let input = func.param(Type::Uint);
 
-                        let instant_return = func.basic_block(|block| {
-                            block.ret(Constant::Uint(0))?;
+                        let instant_return = func.allocate_basic_block();
+                        let folded_block = func.allocate_basic_block();
+
+                        func.basic_block(|block| {
+                            let _sum = block
+                                .call(*add_uint, vec![input.into(), Constant::Uint(100).into()])?;
+
+                            block.branch(Constant::Bool(true), *folded_block, *instant_return)?;
 
                             Ok(())
                         })?;
 
-                        let folded_block = func.basic_block(|block| {
+                        func.resume_building(folded_block, |block| {
                             let a = block.assign(Constant::Uint(100));
                             let a_times_two = block.mul(a.clone(), Constant::Uint(2))?;
                             let a_div_two = block.div(a.clone(), Constant::Uint(2))?;
                             let summed_ops = block.call(
-                                add_uint,
+                                *add_uint,
                                 vec![a_times_two.clone().into(), a_div_two.into()],
                             )?;
                             let multed = block.mul(summed_ops, a_times_two)?;
@@ -358,15 +351,27 @@ mod tests {
                             Ok(())
                         })?;
 
-                        let branch_block = func.basic_block(|block| {
-                            let _sum = block
-                                .call(add_uint, vec![input.into(), Constant::Uint(100).into()])?;
-
-                            block.branch(Constant::Bool(true), folded_block, instant_return)?;
+                        func.resume_building(instant_return, |block| {
+                            block.ret(Constant::Uint(0))?;
 
                             Ok(())
                         })?;
-                        func.set_entry(branch_block);
+
+                        Ok(())
+                    })
+                    .unwrap();
+
+                builder
+                    .resume_building(add_uint, |func| {
+                        let lhs = func.param(Type::Uint);
+                        let rhs = func.param(Type::Uint);
+
+                        func.basic_block(|block| {
+                            let sum = block.add(lhs, rhs)?;
+                            block.ret(sum)?;
+
+                            Ok(())
+                        })?;
 
                         Ok(())
                     })

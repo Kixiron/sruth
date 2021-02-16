@@ -1,13 +1,13 @@
 use crate::{
     builder::{BuildResult, BuilderError, FunctionBuilder},
     repr::{
-        basic_block::BasicBlockMeta,
+        basic_block::BasicBlockDesc,
         instruction::{Add, Assign, Call, Div, Mul, Sub},
         terminator::{Branch, Label, Return},
         BasicBlockId, FuncId, Ident, InstId, Terminator, Type, TypedVar, Value, VarId,
     },
 };
-use std::{convert::TryInto, mem, thread};
+use std::{convert::TryInto, mem, ops::Deref, thread};
 
 #[derive(Debug)]
 pub struct BasicBlockBuilder<'a, 'b: 'a> {
@@ -347,6 +347,40 @@ impl Drop for BasicBlockBuilder<'_, '_> {
 }
 
 #[derive(Debug)]
+#[must_use = "Dropping a deferred basic block without completing it will panic"]
+pub struct DeferredBasicBlock {
+    pub(super) name: Option<Ident>,
+    pub(super) id: BasicBlockId,
+    pub(super) finished: bool,
+}
+
+impl DeferredBasicBlock {
+    pub(super) const fn new(id: BasicBlockId, name: Option<Ident>) -> Self {
+        Self {
+            name,
+            id,
+            finished: false,
+        }
+    }
+}
+
+impl Deref for DeferredBasicBlock {
+    type Target = BasicBlockId;
+
+    fn deref(&self) -> &Self::Target {
+        &self.id
+    }
+}
+
+impl Drop for DeferredBasicBlock {
+    fn drop(&mut self) {
+        if !thread::panicking() && !self.finished {
+            panic!("dropped an allocated basic block without completing it");
+        }
+    }
+}
+
+#[derive(Debug)]
 pub(super) struct IncompleteBasicBlock {
     name: Option<Ident>,
     id: BasicBlockId,
@@ -379,12 +413,12 @@ impl IncompleteBasicBlock {
     }
 }
 
-impl TryInto<BasicBlockMeta> for IncompleteBasicBlock {
+impl TryInto<BasicBlockDesc> for IncompleteBasicBlock {
     type Error = BuilderError;
 
-    fn try_into(self) -> Result<BasicBlockMeta, Self::Error> {
+    fn try_into(self) -> Result<BasicBlockDesc, Self::Error> {
         if let Some(terminator) = self.terminator {
-            Ok(BasicBlockMeta {
+            Ok(BasicBlockDesc {
                 name: self.name,
                 id: self.id,
                 instructions: self.instructions,

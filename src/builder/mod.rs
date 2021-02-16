@@ -9,10 +9,10 @@ pub use error::{BuildResult, BuilderError};
 pub use function::FunctionBuilder;
 
 use crate::{
-    builder::function::IncompleteFunction,
+    builder::function::{DeferredFunction, IncompleteFunction},
     dataflow::InputManager,
     repr::{
-        basic_block::BasicBlockMeta,
+        basic_block::BasicBlockDesc,
         function::{FunctionDesc, Metadata},
         instruction::Call,
         BasicBlock, FuncId, Function, Ident, InstId, Instruction, InstructionExt, Type,
@@ -20,11 +20,11 @@ use crate::{
 };
 use abomonation_derive::Abomonation;
 use differential_dataflow::{difference::Semigroup, lattice::Lattice};
-use std::{sync::Arc, thread};
+use std::{mem, sync::Arc, thread};
 use timely::progress::Timestamp;
 
 pub struct Builder {
-    blocks: Vec<BasicBlockMeta>,
+    blocks: Vec<BasicBlockDesc>,
     functions: Vec<FunctionDesc>,
     instructions: Vec<(InstId, Instruction)>,
     effect_edges: Vec<EffectEdge>,
@@ -40,7 +40,7 @@ impl Builder {
         T: Into<Type>,
         F: FnOnce(&mut FunctionBuilder<'_>) -> BuildResult<()>,
     {
-        self.build_function(None, return_ty.into(), build)
+        self.build_function(None, None, return_ty.into(), build)
     }
 
     pub fn named_function<N, T, F>(
@@ -55,7 +55,45 @@ impl Builder {
         F: FnOnce(&mut FunctionBuilder<'_>) -> BuildResult<()>,
     {
         let name = Ident::new(self.context.interner.get_or_intern(name));
-        self.build_function(Some(name), return_ty.into(), build)
+        self.build_function(None, Some(name), return_ty.into(), build)
+    }
+
+    pub fn allocate_function<T>(&mut self, return_ty: T) -> DeferredFunction
+    where
+        T: Into<Type>,
+    {
+        DeferredFunction::new(self.context.function_id(), None, return_ty.into())
+    }
+
+    pub fn allocate_named_function<N, T>(&mut self, name: N, return_ty: T) -> DeferredFunction
+    where
+        N: AsRef<str>,
+        T: Into<Type>,
+    {
+        let name = Ident::new(self.context.interner.get_or_intern(name));
+        DeferredFunction::new(self.context.function_id(), Some(name), return_ty.into())
+    }
+
+    pub fn resume_building<F>(
+        &mut self,
+        mut function: DeferredFunction,
+        build: F,
+    ) -> BuildResult<FuncId>
+    where
+        F: FnOnce(&mut FunctionBuilder<'_>) -> BuildResult<()>,
+    {
+        debug_assert!(
+            !function.finished,
+            "a deferred function was somehow finished twice",
+        );
+        function.finished = true;
+
+        self.build_function(
+            Some(function.id),
+            function.name,
+            mem::replace(&mut function.return_ty, Type::Unit),
+            build,
+        )
     }
 
     pub fn materialize(&self) -> impl Iterator<Item = Function> + '_ {
@@ -185,6 +223,7 @@ impl Builder {
 
     fn build_function<F>(
         &mut self,
+        id: Option<FuncId>,
         name: Option<Ident>,
         return_ty: Type,
         build: F,
@@ -194,7 +233,7 @@ impl Builder {
     {
         let span = tracing::trace_span!("building function");
         span.in_scope(|| {
-            let id = self.context.function_id();
+            let id = id.unwrap_or_else(|| self.context.function_id());
 
             if let Some(name) = name {
                 tracing::trace!(

@@ -81,14 +81,14 @@ impl IRDisplay for BasicBlockId {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
-pub struct BasicBlockMeta {
+pub struct BasicBlockDesc {
     pub name: Option<Ident>,
     pub id: BasicBlockId,
     pub instructions: Vec<InstId>,
     pub terminator: Terminator,
 }
 
-impl BasicBlockMeta {
+impl BasicBlockDesc {
     pub const fn new(
         name: Option<Ident>,
         id: BasicBlockId,
