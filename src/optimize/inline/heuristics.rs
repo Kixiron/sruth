@@ -11,13 +11,13 @@ use crate::{
 };
 use abomonation_derive::Abomonation;
 use differential_dataflow::{
-    difference::{Abelian, Semigroup},
+    difference::{Abelian, DiffPair, Semigroup},
     lattice::Lattice,
     operators::{Consolidate, Join, Reduce, Threshold},
     Collection, ExchangeData,
 };
 use num_traits::AsPrimitive;
-use std::ops::Mul;
+use std::{iter, ops::Mul};
 use timely::dataflow::Scope;
 
 pub fn harvest_heuristics<S, R>(
@@ -27,6 +27,7 @@ where
     S: Scope,
     S::Timestamp: Lattice,
     R: Semigroup + Abelian + ExchangeData + Mul<Output = R> + AsPrimitive<usize> + From<i8> + Clone,
+    isize: Mul<R, Output = isize>,
 {
     let instructions = program
         .block_instructions
@@ -50,12 +51,12 @@ where
             .map(|(id, _)| (id, R::from(0))),
     );
 
-    let mut inst_lengths = instructions.map(|(func, _)| func).count_core();
+    let mut ssa_inst_lengths = instructions.map(|(func, _)| func).count_core();
 
-    inst_lengths = inst_lengths.concat(
+    ssa_inst_lengths = ssa_inst_lengths.concat(
         &program
             .function_descriptors
-            .antijoin(&inst_lengths.map(|(func, _)| func))
+            .antijoin(&ssa_inst_lengths.map(|(func, _)| func))
             .map(|(id, _)| (id, R::from(0))),
     );
 
@@ -126,18 +127,38 @@ where
             .map(|(id, _)| (id, false)),
     );
 
+    // TODO: Add terminators to this
+    let mut estimated_asm = instructions
+        .explode(|(func, inst)| {
+            let diff = DiffPair::new(R::from(1), inst.estimated_instructions() as isize);
+            iter::once((func, diff))
+        })
+        .count_core::<R>()
+        .map(|(func, diff)| (func, diff.element2 as usize));
+
+    estimated_asm = estimated_asm.concat(
+        &program
+            .function_descriptors
+            .antijoin(&estimated_asm.map(|(func, _)| func))
+            .map(|(id, _)| (id, 0)),
+    );
+
     block_lengths
-        .join(&inst_lengths)
+        .join(&ssa_inst_lengths)
         .join(&invocations)
         .join(&branches)
         .join(&function_calls)
         .join(&is_pure)
+        .join(&estimated_asm)
         .join_map(
             &is_recursive,
             |&func,
              &(
-                ((((block_length, inst_length), invocations), branches), function_calls),
-                is_pure,
+                (
+                    ((((block_length, ssa_inst_length), invocations), branches), function_calls),
+                    is_pure,
+                ),
+                estimated_asm,
             ),
              &is_recursive| {
                 (
@@ -146,15 +167,15 @@ where
                         branches.clone().as_(),
                         invocations.clone().as_(),
                         block_length.clone().as_(),
-                        inst_length.clone().as_(),
+                        ssa_inst_length.clone().as_(),
                         function_calls.clone().as_(),
                         is_pure,
                         is_recursive,
+                        estimated_asm,
                     ),
                 )
             },
         )
-        .inspect(|x| println!("{:?}", x))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
@@ -162,36 +183,40 @@ pub struct InlineHeuristics {
     pub branches: usize,
     pub invocations: usize,
     pub block_length: usize,
-    pub inst_length: usize,
+    pub ssa_inst_length: usize,
     // pub promotable_branches: usize,
     pub function_calls: usize,
     // pub cheap_builtin_calls: usize,
     pub is_pure: bool,
     pub is_recursive: bool,
+    pub estimated_asm: usize,
 }
 
 impl InlineHeuristics {
+    #[allow(clippy::too_many_arguments)]
     pub const fn new(
         branches: usize,
         invocations: usize,
         block_length: usize,
-        inst_length: usize,
+        ssa_inst_length: usize,
         // promotable_branches: usize,
         function_calls: usize,
         // cheap_builtin_calls: usize,
         is_pure: bool,
         is_recursive: bool,
+        estimated_asm: usize,
     ) -> Self {
         Self {
             branches,
             invocations,
             block_length,
-            inst_length,
+            ssa_inst_length,
             // promotable_branches,
             function_calls,
             // cheap_builtin_calls,
             is_pure,
             is_recursive,
+            estimated_asm,
         }
     }
 

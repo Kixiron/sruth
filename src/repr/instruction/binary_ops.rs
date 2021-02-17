@@ -19,7 +19,7 @@ impl Add {
     pub fn evaluate(self) -> Option<Instruction> {
         let (rhs, lhs) = (self.rhs.into_const()?, self.lhs.into_const()?);
 
-        match (rhs, lhs) {
+        match (lhs, rhs) {
             (Constant::Int(lhs), Constant::Int(rhs)) => Some(Instruction::Assign(Assign {
                 value: Value::new(ValueKind::Const(Constant::Int(lhs + rhs)), Type::Int),
                 dest: self.dest,
@@ -76,7 +76,7 @@ impl Sub {
     pub fn evaluate(self) -> Option<Instruction> {
         let (rhs, lhs) = (self.rhs.into_const()?, self.lhs.into_const()?);
 
-        match (rhs, lhs) {
+        match (lhs, rhs) {
             (Constant::Int(lhs), Constant::Int(rhs)) => Some(Instruction::Assign(Assign {
                 value: Value::new(ValueKind::Const(Constant::Int(lhs - rhs)), Type::Int),
                 dest: self.dest,
@@ -133,7 +133,7 @@ impl Mul {
     pub fn evaluate(self) -> Option<Instruction> {
         let (rhs, lhs) = (self.rhs.into_const()?, self.lhs.into_const()?);
 
-        match (rhs, lhs) {
+        match (lhs, rhs) {
             (Constant::Int(lhs), Constant::Int(rhs)) => Some(Instruction::Assign(Assign {
                 value: Value::new(ValueKind::Const(Constant::Int(lhs * rhs)), Type::Int),
                 dest: self.dest,
@@ -190,7 +190,7 @@ impl Div {
     pub fn evaluate(self) -> Option<Instruction> {
         let (rhs, lhs) = (self.rhs.into_const()?, self.lhs.into_const()?);
 
-        match (rhs, lhs) {
+        match (lhs, rhs) {
             (Constant::Int(lhs), Constant::Int(rhs)) => Some(Instruction::Assign(Assign {
                 value: Value::new(ValueKind::Const(Constant::Int(lhs / rhs)), Type::Int),
                 dest: self.dest,

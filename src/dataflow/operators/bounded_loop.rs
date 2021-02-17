@@ -36,13 +36,13 @@ where
         self.scope().iterative(move |scope| {
             let (handle, cycle) = scope.loop_variable(T::from(1));
 
-            let collection = self.enter(scope).concat(&cycle.as_collection());
-            let (connected, output) = looped(&collection)
+            let collection = looped(&self.enter(scope).concat(&cycle.as_collection()));
+            let (connected, _discarded) = collection
                 .inner
                 .branch_when(move |time| time.inner >= max_iterations);
 
             connected.connect_loop(handle);
-            output.as_collection().leave()
+            collection.leave()
         })
     }
 }

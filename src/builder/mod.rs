@@ -143,9 +143,9 @@ impl Builder {
         tracing::trace!("discarded a builder");
     }
 
-    pub fn finish<T, R>(mut self, input: &mut InputManager<T, R>) -> BuildResult<()>
+    pub fn finish<T, R>(mut self, input: &mut InputManager<T, R>, time: T) -> BuildResult<()>
     where
-        T: Timestamp + Lattice,
+        T: Timestamp + Lattice + Clone,
         R: Semigroup + From<i8>,
     {
         if cfg!(debug_assertions) && self.finished {
@@ -191,15 +191,21 @@ impl Builder {
         }
 
         for function in self.functions.drain(..) {
-            input.functions.update((function.id, function), R::from(1));
+            input
+                .functions
+                .update_at((function.id, function), time.clone(), R::from(1));
         }
 
         for block in self.blocks.drain(..) {
-            input.basic_blocks.update((block.id, block), R::from(1));
+            input
+                .basic_blocks
+                .update_at((block.id, block), time.clone(), R::from(1));
         }
 
         for instruction in self.instructions.drain(..) {
-            input.instructions.update(instruction, R::from(1));
+            input
+                .instructions
+                .update_at(instruction, time.clone(), R::from(1));
         }
 
         // TODO: Effect edges

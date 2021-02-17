@@ -131,10 +131,10 @@ impl IRDisplay for Metadata {
             ctx.text(";")
                 .append(ctx.space())
                 .append(ctx.text(format!(
-                    "stats: {} branches, {} invocations, {} blocks, {} instructions, {} function calls, {}, {}",
+                    "stats: {} branches, {} invocations, {} blocks, {} est. asm, {} instructions, {} function calls, {}, {}",
                     heuristics.branches, heuristics.invocations,
-                    heuristics.block_length, heuristics.inst_length,
-                    heuristics.function_calls,
+                    heuristics.block_length, heuristics.estimated_asm,
+                    heuristics.ssa_inst_length, heuristics.function_calls,
                     if heuristics.is_pure { "pure" } else { "impure" },
                     if heuristics.is_recursive { "recursive" } else { "not recursive" },
                 )))
