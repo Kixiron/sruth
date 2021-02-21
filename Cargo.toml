@@ -12,10 +12,14 @@ dot = ["petgraph"]
 
 [dependencies]
 fxhash = "0.2.1"
+derive_more = "0.99.11"
 petgraph = { version = "0.5.1", optional = true }
 abomonation = "0.7.3"
 crossbeam-channel = "0.5.0"
 abomonation_derive = "0.5.0"
+
+[dependencies.sruth-derive]
+path = "crates/sruth-derive"
 
 [dependencies.num-traits]
 version = "0.2.14"

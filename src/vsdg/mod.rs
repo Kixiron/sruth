@@ -11,7 +11,8 @@ pub use graph::{Edge, ProgramGraph};
 fn vsdg_test() {
     use crate::dataflow::{Diff, Time};
     use node::{
-        Constant, Control, End, FuncId, Function, Node, NodeId, Operation, Start, Type, Value,
+        Add, Constant, Control, End, FuncId, Function, Node, NodeId, Operation, Parameter, Return,
+        Start, Type, Value,
     };
     use std::num::NonZeroU64;
     use timely::{dataflow::ProbeHandle, Config};
@@ -39,17 +40,21 @@ fn vsdg_test() {
             inputs.nodes.insert((start, Node::Start(Start)));
 
             let x = NodeId(NonZeroU64::new(2).unwrap());
-            inputs
-                .nodes
-                .insert((x, Node::Value(Value::Parameter(Type::Uint8))));
+            inputs.nodes.insert((
+                x,
+                Node::Value(Value::Parameter(Parameter { ty: Type::Uint8 })),
+            ));
 
             let y = NodeId(NonZeroU64::new(3).unwrap());
-            inputs
-                .nodes
-                .insert((y, Node::Value(Value::Parameter(Type::Uint8))));
+            inputs.nodes.insert((
+                y,
+                Node::Value(Value::Parameter(Parameter { ty: Type::Uint8 })),
+            ));
 
             let z = NodeId(NonZeroU64::new(4).unwrap());
-            inputs.nodes.insert((z, Node::Operation(Operation::Add)));
+            inputs
+                .nodes
+                .insert((z, Node::Operation(Operation::Add(Add { lhs: x, rhs: y }))));
             inputs.value_edges.insert((z, x));
             inputs.value_edges.insert((z, y));
 
@@ -64,17 +69,23 @@ fn vsdg_test() {
                 .insert((b, Node::Value(Value::Constant(Constant::Uint8(10)))));
 
             let c = NodeId(NonZeroU64::new(9).unwrap());
-            inputs.nodes.insert((c, Node::Operation(Operation::Add)));
+            inputs
+                .nodes
+                .insert((c, Node::Operation(Operation::Add(Add { lhs: a, rhs: b }))));
             inputs.value_edges.insert((c, a));
             inputs.value_edges.insert((c, b));
 
             let d = NodeId(NonZeroU64::new(10).unwrap());
-            inputs.nodes.insert((d, Node::Operation(Operation::Add)));
+            inputs
+                .nodes
+                .insert((d, Node::Operation(Operation::Add(Add { lhs: c, rhs: z }))));
             inputs.value_edges.insert((d, c));
             inputs.value_edges.insert((d, z));
 
             let ret = NodeId(NonZeroU64::new(5).unwrap());
-            inputs.nodes.insert((ret, Node::Control(Control::Return)));
+            inputs
+                .nodes
+                .insert((ret, Node::Control(Control::Return(Return {}))));
             inputs.value_edges.insert((ret, d));
 
             let end = NodeId(NonZeroU64::new(6).unwrap());

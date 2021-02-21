@@ -164,14 +164,14 @@ pub fn render_graph<T, R>(receiver: Receiver<Event<T, (GraphNode, T, R)>>) {
                     }
                 },
                 Value::Parameter(param) => {
-                    format!("label = \"param: {}\", shape = doublecircle", param)
+                    format!("label = \"param: {}\", shape = doublecircle", param.ty)
                 }
             },
             Node::Control(control) => match control {
-                Control::Return => "label = \"Return\", shape = diamond".to_owned(),
+                Control::Return(_) => "label = \"Return\", shape = diamond".to_owned(),
             },
             Node::Operation(operation) => match operation {
-                Operation::Add => "label = \"Add\", shape = box".to_owned(),
+                Operation::Add(_) => "label = \"Add\", shape = box".to_owned(),
             },
             Node::End(_) => "label = \"End\", shape = box, peripheries = 2".to_owned(),
             Node::Start(_) => "label = \"Start\", shape = box, peripheries = 2".to_owned(),

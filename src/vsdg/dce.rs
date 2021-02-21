@@ -1,7 +1,7 @@
 use crate::{
     dataflow::{algorithms::reachable, operators::FilterMap},
     vsdg::{
-        node::{End, NodeExt, NodeId},
+        node::{End, Node, NodeExt, NodeId},
         Edge, ProgramGraph,
     },
 };
@@ -33,7 +33,7 @@ where
         let edges = graph.all_edges().distinct_core();
         let roots = graph
             .nodes
-            .filter_map(|(id, node)| node.cast::<End>().map(|_| id));
+            .filter_map(|(id, node): (NodeId, Node)| node.cast::<End>().map(|_| id));
 
         let retained = reachable::reachable(&edges, &roots);
 

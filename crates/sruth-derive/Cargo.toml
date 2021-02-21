@@ -1,0 +1,15 @@
+[package]
+name = "sruth-derive"
+version = "0.1.0"
+authors = ["Chase Wilson <me@chasewilson.dev>"]
+license = "MIT OR Apache-2.0"
+edition = "2018"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+quote = "1.0.9"
+derive_utils = "0.11"
+proc-macro2 = "1.0.24"
+syn = { version = "1.0.60", features = ["derive"] }
