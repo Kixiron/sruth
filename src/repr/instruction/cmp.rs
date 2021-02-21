@@ -1,11 +1,12 @@
 use crate::repr::{
-    utils::{DisplayCtx, IRDisplay, InstructionExt, InstructionPurity},
+    utils::{DisplayCtx, EstimateAsm, IRDisplay, InstructionExt, InstructionPurity},
     Type, TypedVar, Value, VarId,
 };
 use abomonation_derive::Abomonation;
 use lasso::Resolver;
 use pretty::{DocAllocator, DocBuilder};
 
+// TODO: Comparison kind
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
 pub struct Cmp {
     pub lhs: Value,
@@ -34,10 +35,6 @@ impl InstructionExt for Cmp {
 
     fn purity(&self) -> InstructionPurity {
         InstructionPurity::Pure
-    }
-
-    fn estimated_instructions(&self) -> usize {
-        1
     }
 
     fn replace_uses(&mut self, from: VarId, to: &Value) -> bool {
@@ -74,6 +71,12 @@ impl InstructionExt for Cmp {
 
     fn used_values_mut(&mut self) -> Vec<&mut Value> {
         vec![&mut self.lhs, &mut self.rhs]
+    }
+}
+
+impl EstimateAsm for Cmp {
+    fn estimated_instructions(&self) -> usize {
+        1
     }
 }
 

@@ -2,7 +2,7 @@ use crate::{
     builder::{BuildResult, BuilderError, FunctionBuilder},
     repr::{
         basic_block::BasicBlockDesc,
-        instruction::{Add, Assign, Call, Div, Mul, Sub},
+        instruction::{Add, Assign, Call, Cmp, Div, Mul, Sub},
         terminator::{Branch, Label, Return},
         BasicBlockId, FuncId, Ident, InstId, Terminator, Type, TypedVar, Value, VarId,
     },
@@ -13,13 +13,17 @@ use std::{convert::TryInto, mem, ops::Deref, thread};
 pub struct BasicBlockBuilder<'a, 'b: 'a> {
     meta: IncompleteBasicBlock,
     function: &'a mut FunctionBuilder<'b>,
-    finished: bool,
+    pub(super) finished: bool,
 }
 
 // Public API
 impl<'a, 'b> BasicBlockBuilder<'a, 'b> {
     pub const fn block_id(&self) -> BasicBlockId {
         self.meta.id
+    }
+
+    pub const fn is_terminated(&self) -> bool {
+        self.meta.terminator.is_some()
     }
 
     pub fn assign<V>(&mut self, value: V) -> TypedVar
@@ -262,6 +266,51 @@ impl<'a, 'b> BasicBlockBuilder<'a, 'b> {
         Ok(old_terminator)
     }
 
+    pub fn cmp<L, R>(&mut self, lhs: L, rhs: R) -> BuildResult<TypedVar>
+    where
+        L: Into<Value>,
+        R: Into<Value>,
+    {
+        let (lhs, rhs) = (lhs.into(), rhs.into());
+        let (lhs, rhs) = match (lhs.ty().is_infer(), rhs.ty().is_infer()) {
+            (true, false) => (
+                Value {
+                    ty: rhs.ty().clone(),
+                    ..lhs
+                },
+                rhs,
+            ),
+            (false, true) => {
+                let ty = lhs.ty().clone();
+                (lhs, Value { ty, ..rhs })
+            }
+            (true, true) => (lhs, rhs),
+            (false, false) if lhs.ty() == rhs.ty() => (lhs, rhs),
+            (false, false) => {
+                tracing::error!(
+                    "created a cmp with a left hand side type of {:?} and a right hand side type of {:?} in {:?}",
+                    lhs.ty(), rhs.ty(), self.block_id(),
+                );
+
+                return Err(BuilderError::MismatchedOperandTypes);
+            }
+        };
+
+        let (id, dest) = self.inst_and_dest();
+        let var = TypedVar::new(dest, Type::Bool);
+
+        self.function
+            .instructions
+            .push((id, Cmp::new(lhs, rhs, dest).into()));
+        self.meta.instructions.push(id);
+
+        Ok(var)
+    }
+
+    pub fn jump(&mut self, block: BasicBlockId) -> Option<Terminator> {
+        self.meta.terminator.replace(Terminator::Jump(block))
+    }
+
     pub fn ret<V>(&mut self, value: V) -> BuildResult<Option<Terminator>>
     where
         V: Into<Value>,
@@ -361,6 +410,12 @@ impl DeferredBasicBlock {
             id,
             finished: false,
         }
+    }
+}
+
+impl AsRef<BasicBlockId> for DeferredBasicBlock {
+    fn as_ref(&self) -> &BasicBlockId {
+        &self.id
     }
 }
 

@@ -18,11 +18,15 @@ pub struct FunctionBuilder<'a> {
     pub(super) instructions: &'a mut Vec<(InstId, Instruction)>,
     pub(super) effect_edges: &'a mut Vec<EffectEdge>,
     pub(super) context: &'a Context,
-    finished: bool,
+    pub(super) finished: bool,
 }
 
 // TODO: Allocate block
 impl<'a> FunctionBuilder<'a> {
+    pub const fn has_entry(&self) -> bool {
+        self.meta.entry.is_some()
+    }
+
     pub fn basic_block<F>(&mut self, build: F) -> BuildResult<BasicBlockId>
     where
         F: FnOnce(&mut BasicBlockBuilder<'_, '_>) -> BuildResult<()>,
@@ -170,7 +174,11 @@ impl<'a> FunctionBuilder<'a> {
             let meta = IncompleteBasicBlock::new(name, id, Vec::new(), None);
             let mut builder = BasicBlockBuilder::new(meta, self);
 
-            build(&mut builder)?;
+            if let Err(err) = build(&mut builder) {
+                // Prevent a drop panic when the user closure errors
+                builder.finished = true;
+                return Err(err);
+            }
             let block_id = builder.finish()?;
 
             if self.meta.entry.is_none() {

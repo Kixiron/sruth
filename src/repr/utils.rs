@@ -55,15 +55,17 @@ impl<U> CastRef for U {
     }
 }
 
-pub trait InstructionExt: IRDisplay {
+pub trait EstimateAsm {
+    // TODO: Add target arch
+    fn estimated_instructions(&self) -> usize;
+}
+
+pub trait InstructionExt: EstimateAsm + IRDisplay {
     fn dest(&self) -> VarId;
 
     fn dest_type(&self) -> Type;
 
     fn purity(&self) -> InstructionPurity;
-
-    // TODO: Add target arch
-    fn estimated_instructions(&self) -> usize;
 
     fn replace_uses(&mut self, from: VarId, to: &Value) -> bool;
 

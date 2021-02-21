@@ -1,5 +1,5 @@
 use crate::repr::{
-    utils::{DisplayCtx, IRDisplay, InstructionExt, InstructionPurity},
+    utils::{DisplayCtx, EstimateAsm, IRDisplay, InstructionExt, InstructionPurity},
     Ident, Type, TypedVar, Value,
 };
 use abomonation_derive::Abomonation;
@@ -37,10 +37,6 @@ impl InstructionExt for Assign {
         InstructionPurity::Pure
     }
 
-    fn estimated_instructions(&self) -> usize {
-        0
-    }
-
     fn replace_uses(&mut self, from: VarId, to: &Value) -> bool {
         if let Some(var) = self.value.as_var() {
             if var == from {
@@ -62,6 +58,12 @@ impl InstructionExt for Assign {
 
     fn used_values_mut(&mut self) -> Vec<&mut Value> {
         vec![&mut self.value]
+    }
+}
+
+impl EstimateAsm for Assign {
+    fn estimated_instructions(&self) -> usize {
+        1
     }
 }
 

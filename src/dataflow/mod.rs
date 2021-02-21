@@ -3,6 +3,7 @@ mod program;
 mod trace_manager;
 mod translate;
 
+pub mod algorithms;
 pub mod operators;
 
 pub use input_manager::InputManager;

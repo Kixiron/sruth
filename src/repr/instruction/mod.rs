@@ -13,7 +13,9 @@ pub use cmp::Cmp;
 pub use neg::Neg;
 
 use crate::repr::{
-    utils::{DisplayCtx, IRDisplay, InstructionExt, InstructionPurity, RawCast, RawRefCast},
+    utils::{
+        DisplayCtx, EstimateAsm, IRDisplay, InstructionExt, InstructionPurity, RawCast, RawRefCast,
+    },
     Type, TypedVar, Value,
 };
 use abomonation_derive::Abomonation;
@@ -112,12 +114,6 @@ macro_rules! impl_instruction {
                 }
             }
 
-            fn estimated_instructions(&self) -> usize {
-                match self {
-                    $(Self::$type(value) => value.estimated_instructions(),)*
-                }
-            }
-
             fn replace_uses(&mut self, from: VarId, to: &Value) -> bool {
                 match self {
                     $(Self::$type(value) => value.replace_uses(from, to),)*
@@ -139,6 +135,14 @@ macro_rules! impl_instruction {
             fn used_values_mut(&mut self) -> Vec<&mut Value> {
                 match self {
                     $(Self::$type(value) => value.used_values_mut(),)*
+                }
+            }
+        }
+
+        impl EstimateAsm for Instruction {
+            fn estimated_instructions(&self) -> usize {
+                match self {
+                    $(Self::$type(value) => value.estimated_instructions(),)*
                 }
             }
         }

@@ -6,4 +6,5 @@ pub mod optimize;
 pub mod repr;
 mod tests;
 pub mod verify;
+mod vsdg;
 pub mod wasm;

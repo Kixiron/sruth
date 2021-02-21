@@ -261,7 +261,12 @@ impl Builder {
                 &*self.context,
             );
 
-            build(&mut builder)?;
+            if let Err(err) = build(&mut builder) {
+                // Prevent a drop panic when the user closure errors
+                builder.finished = true;
+                return Err(err);
+            }
+
             builder.finish()
         })
     }

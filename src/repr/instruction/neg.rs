@@ -1,5 +1,5 @@
 use crate::repr::{
-    utils::{DisplayCtx, IRDisplay, InstructionExt, InstructionPurity},
+    utils::{DisplayCtx, EstimateAsm, IRDisplay, InstructionExt, InstructionPurity},
     Type, TypedVar, Value, VarId,
 };
 use abomonation_derive::Abomonation;
@@ -36,10 +36,6 @@ impl InstructionExt for Neg {
         InstructionPurity::Pure
     }
 
-    fn estimated_instructions(&self) -> usize {
-        1
-    }
-
     fn replace_uses(&mut self, from: VarId, to: &Value) -> bool {
         if let Some(var) = self.value.as_var() {
             if var == from {
@@ -61,6 +57,12 @@ impl InstructionExt for Neg {
 
     fn used_values_mut(&mut self) -> Vec<&mut Value> {
         vec![&mut self.value]
+    }
+}
+
+impl EstimateAsm for Neg {
+    fn estimated_instructions(&self) -> usize {
+        1
     }
 }
 

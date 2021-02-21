@@ -55,3 +55,40 @@ fn isub_fold() {
 
     run_dataflow(1, builder, context);
 }
+
+#[test]
+fn looping() {
+    let context = Arc::new(Context::new());
+    let mut builder = context.builder();
+
+    builder
+        .named_function("looping", Type::Unit, |func| {
+            let param = func.param(Type::Uint);
+
+            let tail = func.allocate_basic_block();
+            let ret = func.allocate_basic_block();
+
+            let head = func.basic_block(|block| {
+                let cond = block.cmp(param, Constant::Uint(10))?;
+                block.branch(cond, *tail, *ret)?;
+
+                Ok(())
+            })?;
+
+            func.resume_building(tail, |block| {
+                block.jump(head);
+
+                Ok(())
+            })?;
+
+            func.resume_building(ret, |block| {
+                block.ret_unit();
+                Ok(())
+            })?;
+
+            Ok(())
+        })
+        .unwrap();
+
+    run_dataflow(1, builder, context);
+}

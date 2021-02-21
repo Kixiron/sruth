@@ -41,7 +41,7 @@ use timely::{
 };
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-fn init_logging() {
+pub(crate) fn init_logging() {
     let _ = tracing_subscriber::registry()
         .with(tracing_subscriber::filter::LevelFilter::TRACE)
         .with(tracing_subscriber::fmt::layer())
@@ -165,6 +165,8 @@ pub(crate) fn run_dataflow(workers: usize, builder: Builder, context: Arc<Contex
                             .cull_unreachable_blocks()
                             .compact_basic_blocks()
                             .cleanup();
+
+                        program.loops();
 
                         let result = program.consolidate();
                         variables.set(&result);
@@ -327,7 +329,9 @@ pub(crate) fn run_dataflow(workers: usize, builder: Builder, context: Arc<Contex
         trace_manager.advance_by(AntichainRef::new(&[1]));
         trace_manager.distinguish_since(AntichainRef::new(&[1]));
 
-        worker.step_while(|| probe.less_than(input_manager.time()));
+        while probe.less_than(input_manager.time()) {
+            worker.step_or_park(None);
+        }
     })
     .expect("failed to start dataflow");
 

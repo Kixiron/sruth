@@ -1,5 +1,5 @@
 use crate::repr::{
-    utils::{DisplayCtx, IRDisplay, InstructionExt, InstructionPurity},
+    utils::{DisplayCtx, EstimateAsm, IRDisplay, InstructionExt, InstructionPurity},
     FuncId, Type, TypedVar, Value, VarId,
 };
 use abomonation_derive::Abomonation;
@@ -39,10 +39,6 @@ impl InstructionExt for Call {
         InstructionPurity::Maybe
     }
 
-    fn estimated_instructions(&self) -> usize {
-        5
-    }
-
     fn replace_uses(&mut self, from: VarId, to: &Value) -> bool {
         let mut replaced = false;
 
@@ -71,6 +67,12 @@ impl InstructionExt for Call {
 
     fn used_values_mut(&mut self) -> Vec<&mut Value> {
         self.args.iter_mut().collect()
+    }
+}
+
+impl EstimateAsm for Call {
+    fn estimated_instructions(&self) -> usize {
+        5
     }
 }
 

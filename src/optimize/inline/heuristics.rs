@@ -5,7 +5,7 @@ use crate::{
     },
     repr::{
         instruction::Call,
-        utils::{CastRef, InstructionExt, InstructionPurity},
+        utils::{CastRef, EstimateAsm, InstructionExt, InstructionPurity},
         Cast, FuncId,
     },
 };
@@ -127,20 +127,28 @@ where
             .map(|(id, _)| (id, false)),
     );
 
+    let terminator_instructions = program
+        .block_terminators
+        .map(|(block, term)| (block, term.estimated_instructions() as isize))
+        .join_map(&program.function_blocks, |_block, &instructions, &func| {
+            (func, instructions)
+        });
+
     // TODO: Add terminators to this
     let mut estimated_asm = instructions
+        .map(|(func, inst)| (func, inst.estimated_instructions() as isize))
+        .concat(&terminator_instructions)
         .explode(|(func, inst)| {
-            let diff = DiffPair::new(R::from(1), inst.estimated_instructions() as isize);
+            let diff = DiffPair::new(R::from(1), inst);
             iter::once((func, diff))
         })
         .count_core::<R>()
         .map(|(func, diff)| (func, diff.element2 as usize));
 
     estimated_asm = estimated_asm.concat(
-        &program
-            .function_descriptors
+        &terminator_instructions
             .antijoin(&estimated_asm.map(|(func, _)| func))
-            .map(|(id, _)| (id, 0)),
+            .map(|(id, instructions)| (id, instructions as usize)),
     );
 
     block_lengths
@@ -224,8 +232,20 @@ impl InlineHeuristics {
     // TODO: Hot/cold calling conventions
     // TODO: Function purity
     // TODO: inline(never) & inline(always)
-    pub fn inline_cost(&self) -> usize {
-        self.invocations + self.block_length + self.branches + self.function_calls
+    pub fn inline_cost(&self) -> f32 {
+        let mut cost = self.estimated_asm as f32;
+        cost += self.branches as f32 * 1.2;
+        cost += self.function_calls as f32 * 1.4;
+
+        if self.is_pure {
+            cost *= 0.6;
+        }
+
+        if self.is_recursive {
+            cost *= 1.3;
+        }
+
+        cost
     }
 
     /// Returns true if the function is trivially inlinable, meaning that it's small
@@ -235,5 +255,5 @@ impl InlineHeuristics {
         self.inline_cost() > Self::TRIVIALLY_INLINABLE
     }
 
-    const TRIVIALLY_INLINABLE: usize = 10;
+    const TRIVIALLY_INLINABLE: f32 = 100.0;
 }

@@ -74,6 +74,13 @@ impl Terminator {
             Self::Jump(_) | Self::Unreachable => false,
         }
     }
+
+    pub const fn estimated_instructions(&self) -> usize {
+        match self {
+            Self::Jump(_) | Self::Return(_) | Self::Branch(_) => 1,
+            Self::Unreachable => 0,
+        }
+    }
 }
 
 impl IRDisplay for Terminator {

@@ -127,7 +127,7 @@ impl IRDisplay for Metadata {
         A: Clone + 'a,
         R: Resolver,
     {
-        ctx.nil().append(if let Some(heuristics) = self.inline_heuristics.as_ref() {
+        if let Some(heuristics) = self.inline_heuristics.as_ref() {
             ctx.text(";")
                 .append(ctx.space())
                 .append(ctx.text(format!(
@@ -143,13 +143,13 @@ impl IRDisplay for Metadata {
                 .append(
                     ctx.text(";")
                         .append(ctx.space())
-                        .append(ctx.text(format!("inline cost: {}", heuristics.inline_cost())))
+                        .append(ctx.text(format!("inline cost: {:.2}", heuristics.inline_cost())))
                         .group()
                 )
                 .append(ctx.hardline())
         } else {
             ctx.nil()
-        })
+        }
     }
 }
 

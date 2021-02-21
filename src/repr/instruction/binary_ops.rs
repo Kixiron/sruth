@@ -1,6 +1,6 @@
 use crate::repr::{
     instruction::{Assign, VarId},
-    utils::{DisplayCtx, IRDisplay, InstructionExt, InstructionPurity, RawCast},
+    utils::{DisplayCtx, EstimateAsm, IRDisplay, InstructionExt, InstructionPurity, RawCast},
     Constant, Instruction, Type, TypedVar, Value, ValueKind,
 };
 use abomonation_derive::Abomonation;
@@ -288,10 +288,6 @@ macro_rules! impl_binop {
                     InstructionPurity::Pure
                 }
 
-                fn estimated_instructions(&self) -> usize {
-                    1
-                }
-
                 fn replace_uses(&mut self, from: VarId, to: &Value) -> bool {
                     let mut replaced = false;
 
@@ -325,6 +321,12 @@ macro_rules! impl_binop {
 
                 fn used_values_mut(&mut self) -> Vec<&mut Value> {
                     vec![&mut self.lhs, &mut self.rhs]
+                }
+            }
+
+            impl EstimateAsm for $type {
+                fn estimated_instructions(&self) -> usize {
+                    1
                 }
             }
         )*
@@ -395,12 +397,6 @@ macro_rules! impl_binop {
                 }
             }
 
-            fn estimated_instructions(&self) -> usize {
-                match self {
-                    $(Self::$type(op) => op.estimated_instructions(),)*
-                }
-            }
-
             fn replace_uses(&mut self, from: VarId, to: &Value) -> bool {
                 match self {
                     $(Self::$type(op) => op.replace_uses(from, to),)*
@@ -422,6 +418,14 @@ macro_rules! impl_binop {
             fn used_values_mut(&mut self) -> Vec<&mut Value> {
                 match self {
                     $(Self::$type(op) => op.used_values_mut(),)*
+                }
+            }
+        }
+
+        impl EstimateAsm for BinaryOp {
+            fn estimated_instructions(&self) -> usize {
+                match self {
+                    $(Self::$type(op) => op.estimated_instructions(),)*
                 }
             }
         }

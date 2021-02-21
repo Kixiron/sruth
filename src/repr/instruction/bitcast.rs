@@ -1,5 +1,5 @@
 use crate::repr::{
-    utils::{DisplayCtx, IRDisplay, InstructionPurity},
+    utils::{DisplayCtx, EstimateAsm, IRDisplay, InstructionPurity},
     InstructionExt, Type, TypedVar, Value, ValueKind, VarId,
 };
 use abomonation_derive::Abomonation;
@@ -68,10 +68,6 @@ impl InstructionExt for Bitcast {
         InstructionPurity::Pure
     }
 
-    fn estimated_instructions(&self) -> usize {
-        0
-    }
-
     fn replace_uses(&mut self, from: VarId, to: &Value) -> bool {
         if let Some(to) = to.as_typed_var() {
             if self.source.as_var() == Some(from) {
@@ -93,6 +89,12 @@ impl InstructionExt for Bitcast {
 
     fn used_values_mut(&mut self) -> Vec<&mut Value> {
         vec![&mut self.source]
+    }
+}
+
+impl EstimateAsm for Bitcast {
+    fn estimated_instructions(&self) -> usize {
+        0
     }
 }
 

@@ -7,11 +7,12 @@ license = "MIT OR Apache-2.0"
 edition = "2018"
 
 [features]
-default = ["wasm"]
-wasm = []
+default = ["dot"]
+dot = ["petgraph"]
 
 [dependencies]
 fxhash = "0.2.1"
+petgraph = { version = "0.5.1", optional = true }
 abomonation = "0.7.3"
 crossbeam-channel = "0.5.0"
 abomonation_derive = "0.5.0"
@@ -37,6 +38,11 @@ git = "https://github.com/TimelyDataflow/timely-dataflow"
 default-features = false
 
 [dependencies.differential-dataflow]
+git = "https://github.com/TimelyDataflow/differential-dataflow"
+rev = "2b12f29d951b60c6c1ef3db77fbba1568db5a2c3"
+default-features = false
+
+[dependencies.dogsdogsdogs]
 git = "https://github.com/TimelyDataflow/differential-dataflow"
 rev = "2b12f29d951b60c6c1ef3db77fbba1568db5a2c3"
 default-features = false

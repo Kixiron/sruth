@@ -39,7 +39,7 @@ where
         // TODO: Update `FunctionMeta`s
         // TODO: Update `BasicBlockMeta`s
         let program = self.instructions.scope().region_named("Cleanup", |region| {
-            let program = self.enter(region);
+            let program = self.enter_region(region);
 
             // TODO: Filter for reachable returns
             let returned_vars = program.block_terminators.collect_castable::<Return>();
@@ -354,19 +354,35 @@ where
                 let program = self.enter(region);
 
                 // The root nodes are the set function of entry blocks
-                let roots = program
+                let value_roots = program
                     .function_descriptors
                     .map(|(id, meta)| (meta.entry, id));
 
                 // The edges are the paths created by jumps and branches between blocks
-                let edges = program.block_terminators.flat_map(|(block, term)| {
+                let value_edges = program.block_terminators.flat_map(|(block, term)| {
                     term.jump_targets()
                         .into_iter()
                         .map(move |target| (block, target))
                 });
 
                 // Propagate function ids along intra-block paths, all remaining blocks are reachable
-                let reachable_blocks = propagate::propagate(&edges, &roots).map(|(block, _)| block);
+                let mut reachable_blocks =
+                    propagate::propagate(&value_edges, &value_roots).map(|(block, _)| block);
+
+                let control_roots = program
+                    .block_terminators
+                    .map(|(block, _)| (block, ()))
+                    .join_map(&program.function_blocks, |&node, &(), &func| (node, func));
+                let control_edges = program.block_terminators.flat_map(|(src, term)| {
+                    term.jump_targets().into_iter().map(move |dest| (src, dest))
+                });
+
+                reachable_blocks = reachable_blocks
+                    .concat(
+                        &propagate::propagate(&control_edges, &control_roots)
+                            .map(|(block, _)| block),
+                    )
+                    .distinct_core();
 
                 let block_instructions = program
                     .block_instructions
