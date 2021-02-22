@@ -6,7 +6,7 @@ mod value;
 
 pub use control::{Control, Return};
 pub use node_ext::{Castable, NodeExt};
-pub use operation::{Add, Operation};
+pub use operation::{Add, Cmp, CmpKind, Operation};
 pub use structure::{End, Merge, Start};
 pub use value::{Constant, Parameter, Type, Value};
 

@@ -327,3 +327,89 @@ where
         (left.as_collection(), right.as_collection())
     }
 }
+
+// pub trait SplitBy<S, D, R>
+// where
+//     S: Scope,
+//     R: Semigroup,
+// {
+//     fn split_by<Split, L>(&self, logic: L) -> Split::Collection<S, R>
+//     where
+//         Split: Splittable,
+//         L: FnMut(D) -> Split + 'static,
+//     {
+//         self.split_by_named("SplitBy", logic)
+//     }
+//
+//     fn split_by_named<Split, L>(&self, name: &str, logic: L) -> Split::Collection<S, R>
+//     where
+//         Split: Splittable,
+//         L: FnMut(D) -> Split + 'static;
+// }
+//
+// impl<S, D, R> SplitBy<S, D, R> for Collection<S, D, R>
+// where
+//     S: Scope,
+//     R: Semigroup,
+// {
+//     fn split_by_named<Split, L>(&self, name: &str, logic: L) -> Split::Collection<S, R>
+//     where
+//         Split: Splittable,
+//         L: FnMut(D) -> Split + 'static {
+//         todo!()
+//     }
+// }
+//
+// pub trait Splittable {
+//     type Collection<S, R>
+//     where
+//         S: Scope,
+//         R: Semigroup;
+// }
+//
+// macro_rules! impl_splittable {
+//     (
+//         $(
+//             ($($elem:ident),* $(,)?)
+//         ),* $(,)?
+//     ) => {
+//         $(
+//             impl<$($elem,)*> Splittable for ($($elem,)*) {
+//                 type Collection<S, R>
+//                 where
+//                     S: Scope,
+//                     R: Semigroup,
+//                 = ($(Collection<S, $elem, R>,)*);
+//             }
+//         )*
+//     };
+// }
+//
+// impl_splittable! {
+//     (A,),
+//     (A, B),
+//     (A, B, C),
+//     (A, B, C, D),
+//     (A, B, C, D, E),
+//     (A, B, C, D, E, F),
+//     (A, B, C, D, E, F, G),
+//     (A, B, C, D, E, F, G, H),
+//     (A, B, C, D, E, F, G, H, I),
+//     (A, B, C, D, E, F, G, H, I, J),
+//     (A, B, C, D, E, F, G, H, I, J, K),
+//     (A, B, C, D, E, F, G, H, I, J, K, L),
+//     (A, B, C, D, E, F, G, H, I, J, K, L, M),
+//     (A, B, C, D, E, F, G, H, I, J, K, L, M, N),
+//     (A, B, C, D, E, F, G, H, I, J, K, L, M, N, O),
+//     (A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P),
+//     (A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q),
+//     (A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, T),
+//     (A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, T, U),
+//     (A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, T, U, V),
+//     (A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, T, U, V, W),
+//     (A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, T, U, V, W, X),
+//     (A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, T, U, V, W, X, Y),
+//     (A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, T, U, V, W, X, Y, Z),
+//     (A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, T, U, V, W, X, Y, Z, AA),
+//     (A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, T, U, V, W, X, Y, Z, AA, BB),
+// }

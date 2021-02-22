@@ -57,3 +57,4 @@ tracing-subscriber = "0.2.15"
 [profile.dev]
 opt-level = 0
 incremental = true
+debug = 0

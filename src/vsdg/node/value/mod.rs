@@ -25,12 +25,14 @@ pub enum Value {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
 pub enum Type {
     Uint8,
+    Bool,
 }
 
 impl Display for Type {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Uint8 => f.write_str("u8"),
+            Self::Bool => f.write_str("bool"),
         }
     }
 }

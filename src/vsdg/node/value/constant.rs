@@ -8,6 +8,17 @@ use std::{hint, ops::Add as AddTrait};
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
 pub enum Constant {
     Uint8(u8),
+    Bool(bool),
+}
+
+impl Constant {
+    pub const fn as_bool(&self) -> Option<bool> {
+        if let Self::Bool(b) = *self {
+            Some(b)
+        } else {
+            None
+        }
+    }
 }
 
 impl NodeExt for Constant {
@@ -27,6 +38,7 @@ impl AddTrait<Constant> for Constant {
     fn add(self, rhs: Constant) -> Self::Output {
         match (self, rhs) {
             (Self::Uint8(left), Self::Uint8(right)) => Self::Uint8(left + right),
+            _ => panic!(),
         }
     }
 }
@@ -38,6 +50,7 @@ impl AddTrait<&Constant> for &Constant {
     fn add(self, rhs: &Constant) -> Self::Output {
         match (self, rhs) {
             (&Constant::Uint8(left), &Constant::Uint8(right)) => Constant::Uint8(left + right),
+            _ => panic!(),
         }
     }
 }

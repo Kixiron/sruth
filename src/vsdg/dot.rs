@@ -1,7 +1,7 @@
 use crate::{
     dataflow::operators::{CrossbeamExtractor, CrossbeamPusher},
     vsdg::{
-        node::{Constant, Control, FuncId, Function, Node, NodeId, Operation, Value},
+        node::{Constant, FuncId, Function, Node, NodeExt, NodeId, Operation, Value},
         Edge, ProgramGraph,
     },
 };
@@ -162,20 +162,26 @@ pub fn render_graph<T, R>(receiver: Receiver<Event<T, (GraphNode, T, R)>>) {
                     Constant::Uint8(uint8) => {
                         format!("label = \"{}: u8\", shape = circle", uint8)
                     }
+                    Constant::Bool(b) => {
+                        format!("label = \"{}: bool\", shape = circle", b)
+                    }
                 },
                 Value::Parameter(param) => {
                     format!("label = \"param: {}\", shape = doublecircle", param.ty)
                 }
             },
-            Node::Control(control) => match control {
-                Control::Return(_) => "label = \"Return\", shape = diamond".to_owned(),
-            },
-            Node::Operation(operation) => match operation {
-                Operation::Add(_) => "label = \"Add\", shape = box".to_owned(),
-            },
-            Node::End(_) => "label = \"End\", shape = box, peripheries = 2".to_owned(),
-            Node::Start(_) => "label = \"Start\", shape = box, peripheries = 2".to_owned(),
-            Node::Merge(_) => "label = \"Merge\", shape = box, peripheries = 2".to_owned(),
+            Node::Control(control) => {
+                format!("label = \"{}\", shape = diamond", control.node_name())
+            }
+            Node::Operation(operation) => {
+                format!("label = \"{}\", shape = box", operation.node_name())
+            }
+            Node::End(_) | Node::Start(_) | Node::Merge(_) => {
+                format!(
+                    "label = \"{}\", shape = box, peripheries = 2",
+                    node.node_name(),
+                )
+            }
         },
     );
 
