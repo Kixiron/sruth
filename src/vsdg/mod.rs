@@ -2,6 +2,7 @@ mod dce;
 mod dot;
 mod folding;
 mod graph;
+mod loops;
 mod node;
 
 pub use graph::{Edge, ProgramGraph};
@@ -27,6 +28,8 @@ fn vsdg_test() {
 
             let graph = folding::constant_folding(scope, &graph);
             let graph = dce::dce(scope, &graph);
+            let loops = loops::detect_loops(scope, &graph)
+                .inspect(|x| tracing::trace!("looping edge: {:?}", x));
 
             graph.render_graph(sender.clone());
             inputs
