@@ -1,6 +1,7 @@
 use crate::{
     builder::Builder,
     repr::{BasicBlockId, FuncId, InstId, VarId},
+    vsdg::node::NodeId,
 };
 use lasso::ThreadedRodeo;
 use std::{
@@ -18,6 +19,7 @@ pub struct Context {
     block_counter: AtomicU64,
     inst_counter: AtomicU64,
     var_counter: AtomicU64,
+    node_counter: AtomicU64,
 }
 
 // Public API
@@ -29,6 +31,7 @@ impl Context {
             block_counter: AtomicU64::new(0),
             inst_counter: AtomicU64::new(0),
             var_counter: AtomicU64::new(0),
+            node_counter: AtomicU64::new(0),
         }
     }
 
@@ -57,6 +60,10 @@ impl Context {
 
     crate fn var_id(&self) -> VarId {
         VarId::new(fetch_id(&self.var_counter))
+    }
+
+    crate fn node_id(&self) -> NodeId {
+        NodeId::new(fetch_id(&self.node_counter))
     }
 }
 

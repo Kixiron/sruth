@@ -1,7 +1,15 @@
 use differential_dataflow::{collection::AsCollection, difference::Semigroup, Collection};
 use timely::{
     dataflow::{
-        channels::pact::Pipeline, operators::generic::builder_rc::OperatorBuilder, Scope, Stream,
+        channels::{
+            pact::Pipeline,
+            pushers::{buffer::Session, Counter, Tee},
+        },
+        operators::{
+            generic::{builder_rc::OperatorBuilder, OutputHandle, OutputWrapper},
+            CapabilityRef,
+        },
+        Scope, ScopeParent, Stream,
     },
     Data,
 };
@@ -50,7 +58,6 @@ where
                 let (mut left_out, mut right_out) = (left_out.activate(), right_out.activate());
 
                 input.for_each(|capability, data| {
-                    let capability = capability.retain();
                     data.swap(&mut buffer);
 
                     let (mut left_session, mut right_session) = (
@@ -328,88 +335,247 @@ where
     }
 }
 
-// pub trait SplitBy<S, D, R>
-// where
-//     S: Scope,
-//     R: Semigroup,
-// {
-//     fn split_by<Split, L>(&self, logic: L) -> Split::Collection<S, R>
-//     where
-//         Split: Splittable,
-//         L: FnMut(D) -> Split + 'static,
-//     {
-//         self.split_by_named("SplitBy", logic)
-//     }
-//
-//     fn split_by_named<Split, L>(&self, name: &str, logic: L) -> Split::Collection<S, R>
-//     where
-//         Split: Splittable,
-//         L: FnMut(D) -> Split + 'static;
-// }
-//
-// impl<S, D, R> SplitBy<S, D, R> for Collection<S, D, R>
-// where
-//     S: Scope,
-//     R: Semigroup,
-// {
-//     fn split_by_named<Split, L>(&self, name: &str, logic: L) -> Split::Collection<S, R>
-//     where
-//         Split: Splittable,
-//         L: FnMut(D) -> Split + 'static {
-//         todo!()
-//     }
-// }
-//
-// pub trait Splittable {
-//     type Collection<S, R>
-//     where
-//         S: Scope,
-//         R: Semigroup;
-// }
-//
-// macro_rules! impl_splittable {
-//     (
-//         $(
-//             ($($elem:ident),* $(,)?)
-//         ),* $(,)?
-//     ) => {
-//         $(
-//             impl<$($elem,)*> Splittable for ($($elem,)*) {
-//                 type Collection<S, R>
-//                 where
-//                     S: Scope,
-//                     R: Semigroup,
-//                 = ($(Collection<S, $elem, R>,)*);
-//             }
-//         )*
-//     };
-// }
-//
-// impl_splittable! {
-//     (A,),
-//     (A, B),
-//     (A, B, C),
-//     (A, B, C, D),
-//     (A, B, C, D, E),
-//     (A, B, C, D, E, F),
-//     (A, B, C, D, E, F, G),
-//     (A, B, C, D, E, F, G, H),
-//     (A, B, C, D, E, F, G, H, I),
-//     (A, B, C, D, E, F, G, H, I, J),
-//     (A, B, C, D, E, F, G, H, I, J, K),
-//     (A, B, C, D, E, F, G, H, I, J, K, L),
-//     (A, B, C, D, E, F, G, H, I, J, K, L, M),
-//     (A, B, C, D, E, F, G, H, I, J, K, L, M, N),
-//     (A, B, C, D, E, F, G, H, I, J, K, L, M, N, O),
-//     (A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P),
-//     (A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q),
-//     (A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, T),
-//     (A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, T, U),
-//     (A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, T, U, V),
-//     (A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, T, U, V, W),
-//     (A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, T, U, V, W, X),
-//     (A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, T, U, V, W, X, Y),
-//     (A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, T, U, V, W, X, Y, Z),
-//     (A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, T, U, V, W, X, Y, Z, AA),
-//     (A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, T, U, V, W, X, Y, Z, AA, BB),
-// }
+pub trait SplitBy<S, D, R>
+where
+    S: Scope,
+    R: Semigroup,
+{
+    fn split_by<Split, L>(&self, logic: L) -> Split::Collections<S, R>
+    where
+        Split: Splittable + 'static,
+        Split::Outputs<S, R>: 'static,
+        L: FnMut(D) -> Split + 'static,
+    {
+        self.split_by_named("SplitBy", logic)
+    }
+
+    fn split_by_named<Split, L>(&self, name: &str, logic: L) -> Split::Collections<S, R>
+    where
+        Split: Splittable + 'static,
+        Split::Outputs<S, R>: 'static,
+        L: FnMut(D) -> Split + 'static;
+}
+
+impl<S, D, R> SplitBy<S, D, R> for Collection<S, D, R>
+where
+    S: Scope,
+    R: Semigroup,
+    D: Data,
+{
+    fn split_by_named<Split, L>(&self, name: &str, mut logic: L) -> Split::Collections<S, R>
+    where
+        Split: Splittable + 'static,
+        Split::Outputs<S, R>: 'static,
+        L: FnMut(D) -> Split + 'static,
+    {
+        let mut buffer = Vec::new();
+
+        let mut builder = OperatorBuilder::new(name.to_owned(), self.scope());
+        builder.set_notify(false);
+
+        let mut input = builder.new_input(&self.inner, Pipeline);
+        let (mut outputs, collections) = Split::outputs(&mut builder);
+
+        builder.build(move |_capabilities| {
+            move |_frontiers| {
+                let mut activations = Split::activate(&mut outputs);
+
+                input.for_each(|capability, data| {
+                    data.swap(&mut buffer);
+
+                    let mut sessions = Split::sessions(&mut activations, &capability);
+
+                    for (data, time, diff) in buffer.drain(..) {
+                        let split = logic(data).interleave(time, diff);
+
+                        Split::give_to(split, &mut sessions);
+                    }
+                });
+            }
+        });
+
+        collections
+    }
+}
+
+pub trait Splittable {
+    type Collections<S, R>
+    where
+        S: Scope,
+        R: Semigroup;
+
+    type Outputs<S, R>
+    where
+        S: ScopeParent,
+        R: Clone + 'static;
+
+    type Activations<'a, S, R>
+    where
+        S: ScopeParent,
+        R: Clone + 'static;
+
+    type Sessions<'a, S, R>
+    where
+        S: ScopeParent,
+        R: Clone + 'static;
+
+    type Stamped<S, R>
+    where
+        S: ScopeParent;
+
+    fn outputs<S, R>(
+        builder: &mut OperatorBuilder<S>,
+    ) -> (Self::Outputs<S, R>, Self::Collections<S, R>)
+    where
+        S: Scope,
+        R: Semigroup + Clone;
+
+    fn activate<S, R>(outputs: &mut Self::Outputs<S, R>) -> Self::Activations<'_, S, R>
+    where
+        S: ScopeParent,
+        R: Clone;
+
+    fn sessions<'a, S, R>(
+        activations: &'a mut Self::Activations<'_, S, R>,
+        capability: &'a CapabilityRef<'_, S::Timestamp>,
+    ) -> Self::Sessions<'a, S, R>
+    where
+        S: ScopeParent,
+        R: Clone + 'static;
+
+    fn interleave<S, R>(self, time: S::Timestamp, diff: R) -> Self::Stamped<S, R>
+    where
+        S: ScopeParent,
+        R: Clone;
+
+    fn give_to<S, R>(stamped: Self::Stamped<S, R>, sessions: &mut Self::Sessions<'_, S, R>)
+    where
+        S: ScopeParent,
+        R: Clone + 'static;
+}
+
+macro_rules! impl_splittable {
+    (
+        $(
+            ($($elem:ident),* $(,)?)
+        ),* $(,)?
+    ) => {
+        $(
+            #[allow(non_snake_case)]
+            impl<$($elem,)*> Splittable for ($($elem,)*)
+            where
+                $($elem: Data,)*
+            {
+                type Collections<S: Scope, R: Semigroup> = ($(Collection<S, $elem, R>,)*);
+
+                type Outputs<S: ScopeParent, R: Clone + 'static>
+                    = ($(OutputWrapper<S::Timestamp, ($elem, S::Timestamp, R), Tee<S::Timestamp, ($elem, S::Timestamp, R)>>,)*);
+
+                type Activations<'a, S: ScopeParent, R: Clone + 'static>
+                    = ($(OutputHandle<'a, S::Timestamp, ($elem, S::Timestamp, R), Tee<S::Timestamp, ($elem, S::Timestamp, R)>>,)*);
+
+                type Sessions<'a, S: ScopeParent, R: Clone + 'static>
+                    = ($(Session<'a, S::Timestamp, ($elem, S::Timestamp, R), Counter<S::Timestamp, ($elem, S::Timestamp, R), Tee<S::Timestamp, ($elem, S::Timestamp, R)>>>,)*);
+
+                type Stamped<S: ScopeParent, R> = ($(($elem, S::Timestamp, R),)*);
+
+                fn outputs<S, R>(
+                    builder: &mut OperatorBuilder<S>,
+                ) -> (Self::Outputs<S, R>, Self::Collections<S, R>)
+                where
+                    S: Scope,
+                    R: Semigroup,
+                {
+                    $(let $elem = builder.new_output::<($elem, S::Timestamp, R)>();)*
+
+                    (
+                        ($($elem.0,)*),
+                        ($($elem.1.as_collection(),)*),
+                    )
+                }
+
+                fn activate<S, R>(outputs: &mut Self::Outputs<S, R>) -> Self::Activations<'_, S, R>
+                where
+                    S: ScopeParent,
+                    R: Clone,
+                {
+                    let ($($elem,)*) = outputs;
+
+                    ($($elem.activate(),)*)
+                }
+
+                fn sessions<'a, S, R>(
+                    activations: &'a mut Self::Activations<'_, S, R>,
+                    capability: &'a CapabilityRef<'_, S::Timestamp>,
+                ) -> Self::Sessions<'a, S, R>
+                where
+                    S: ScopeParent,
+                    R: Clone + 'static,
+                {
+                    let ($($elem,)*) = activations;
+
+                    ($($elem.session(capability),)*)
+                }
+
+                fn interleave<S, R>(self, time: S::Timestamp, diff: R) -> Self::Stamped<S, R>
+                where
+                    S: ScopeParent,
+                    S::Timestamp: Clone,
+                    R: Clone,
+                {
+                    let ($($elem,)*) = self;
+
+                    ($(($elem, time.clone(), diff.clone()),)*)
+                }
+
+                fn give_to<S, R>(stamped: Self::Stamped<S, R>, sessions: &mut Self::Sessions<'_, S, R>)
+                where
+                    S: ScopeParent,
+                    R: Clone + 'static,
+                {
+                    struct __Sessions<$($elem),*>{
+                        $($elem: $elem,)*
+                    }
+
+                    let sessions = {
+                        let ($($elem,)*) = sessions;
+                        __Sessions{$($elem,)*}
+                    };
+
+                    let ($($elem,)*) = stamped;
+
+                    $(sessions.$elem.give($elem);)*
+                }
+            }
+        )*
+    };
+}
+
+impl_splittable! {
+    (A,),
+    (A, B),
+    (A, B, C),
+    (A, B, C, D),
+    (A, B, C, D, E),
+    (A, B, C, D, E, F),
+    (A, B, C, D, E, F, G),
+    (A, B, C, D, E, F, G, H),
+    (A, B, C, D, E, F, G, H, I),
+    (A, B, C, D, E, F, G, H, I, J),
+    (A, B, C, D, E, F, G, H, I, J, K),
+    (A, B, C, D, E, F, G, H, I, J, K, L),
+    (A, B, C, D, E, F, G, H, I, J, K, L, M),
+    (A, B, C, D, E, F, G, H, I, J, K, L, M, N),
+    (A, B, C, D, E, F, G, H, I, J, K, L, M, N, O),
+    (A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P),
+    (A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q),
+    (A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, T),
+    (A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, T, U),
+    (A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, T, U, V),
+    (A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, T, U, V, W),
+    (A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, T, U, V, W, X),
+    (A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, T, U, V, W, X, Y),
+    (A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, T, U, V, W, X, Y, Z),
+    (A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, T, U, V, W, X, Y, Z, AA),
+    (A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, T, U, V, W, X, Y, Z, AA, BB),
+}

@@ -1,4 +1,4 @@
-#![feature(crate_visibility_modifier)]
+#![feature(crate_visibility_modifier, generic_associated_types)]
 
 pub mod builder;
 pub mod dataflow;

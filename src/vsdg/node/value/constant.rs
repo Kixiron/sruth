@@ -3,7 +3,10 @@ use super::{
     Node, NodeId, Value,
 };
 use abomonation_derive::Abomonation;
-use std::{hint, ops::Add as AddTrait};
+use std::{
+    hint,
+    ops::{Add, Sub},
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
 pub enum Constant {
@@ -19,6 +22,10 @@ impl Constant {
             None
         }
     }
+
+    pub const fn is_zero(&self) -> bool {
+        matches!(self, Self::Uint8(0))
+    }
 }
 
 impl NodeExt for Constant {
@@ -31,25 +38,43 @@ impl NodeExt for Constant {
     }
 }
 
-impl AddTrait<Constant> for Constant {
+impl Add<Constant> for Constant {
     // TODO: Should be result
     type Output = Constant;
 
     fn add(self, rhs: Constant) -> Self::Output {
-        match (self, rhs) {
-            (Self::Uint8(left), Self::Uint8(right)) => Self::Uint8(left + right),
-            _ => panic!(),
-        }
+        &self + &rhs
     }
 }
 
-impl AddTrait<&Constant> for &Constant {
+impl Add<&Constant> for &Constant {
     // TODO: Should be result
     type Output = Constant;
 
     fn add(self, rhs: &Constant) -> Self::Output {
         match (self, rhs) {
             (&Constant::Uint8(left), &Constant::Uint8(right)) => Constant::Uint8(left + right),
+            _ => panic!(),
+        }
+    }
+}
+
+impl Sub<Constant> for Constant {
+    // TODO: Should be result
+    type Output = Constant;
+
+    fn sub(self, rhs: Constant) -> Self::Output {
+        &self - &rhs
+    }
+}
+
+impl Sub<&Constant> for &Constant {
+    // TODO: Should be result
+    type Output = Constant;
+
+    fn sub(self, rhs: &Constant) -> Self::Output {
+        match (self, rhs) {
+            (&Constant::Uint8(left), &Constant::Uint8(right)) => Constant::Uint8(left - right),
             _ => panic!(),
         }
     }

@@ -1,11 +1,17 @@
 use crate::{
     builder::{
         block::{DeferredBasicBlock, IncompleteBasicBlock},
-        BasicBlockBuilder, BuildResult, BuilderError, Context, EffectEdge,
+        BasicBlockBuilder, BuildResult, BuilderError, Context,
     },
     repr::{
         basic_block::BasicBlockDesc, function::FunctionDesc, BasicBlockId, FuncId, Ident, InstId,
         Instruction, Type, TypedVar,
+    },
+    vsdg::{
+        node::{
+            Add as NodeAdd, Constant, End, Node, NodeId, Parameter, Return, Start, Type as NodeType,
+        },
+        Edge,
     },
 };
 use std::{convert::TryInto, mem, ops::Deref, thread};
@@ -16,9 +22,14 @@ pub struct FunctionBuilder<'a> {
     pub(super) blocks: &'a mut Vec<BasicBlockDesc>,
     pub(super) functions: &'a mut Vec<FunctionDesc>,
     pub(super) instructions: &'a mut Vec<(InstId, Instruction)>,
-    pub(super) effect_edges: &'a mut Vec<EffectEdge>,
+    pub(super) nodes: &'a mut Vec<(NodeId, Node)>,
+    pub(super) effect_edges: &'a mut Vec<Edge>,
+    pub(super) control_edges: &'a mut Vec<Edge>,
+    pub(super) value_edges: &'a mut Vec<Edge>,
     pub(super) context: &'a Context,
     pub(super) finished: bool,
+    last_control: NodeId,
+    end_node: NodeId,
 }
 
 // TODO: Allocate block
@@ -104,6 +115,17 @@ impl<'a> FunctionBuilder<'a> {
         TypedVar::new(id, ty)
     }
 
+    pub fn vsdg_param<T>(&mut self, ty: T) -> NodeId
+    where
+        T: Into<NodeType>,
+    {
+        let node_id = self.context.node_id();
+        let node: Node = Parameter { ty: ty.into() }.into();
+        self.nodes.push((node_id, node));
+
+        node_id
+    }
+
     pub fn params<I>(&mut self, types: I) -> Vec<TypedVar>
     where
         I: IntoIterator<Item = Type>,
@@ -118,28 +140,87 @@ impl<'a> FunctionBuilder<'a> {
         ids
     }
 
+    pub fn vsdg_params<I>(&mut self, types: I) -> Vec<NodeId>
+    where
+        I: IntoIterator<Item = NodeType>,
+    {
+        let mut ids = Vec::with_capacity(10);
+        for ty in types {
+            let node_id = self.context.node_id();
+            let node: Node = Parameter { ty }.into();
+
+            self.nodes.push((node_id, node));
+            ids.push(node_id);
+        }
+
+        ids
+    }
+
+    pub fn vsdg_add(&mut self, lhs: NodeId, rhs: NodeId) -> BuildResult<NodeId> {
+        let node_id = self.context.node_id();
+
+        self.nodes.push((node_id, NodeAdd { lhs, rhs }.into()));
+        self.value_edges.push((node_id, lhs));
+        self.value_edges.push((node_id, rhs));
+
+        Ok(node_id)
+    }
+
+    pub fn vsdg_return(&mut self, value: NodeId) -> BuildResult<()> {
+        let node_id = self.context.node_id();
+
+        self.nodes.push((node_id, Return {}.into()));
+        self.value_edges.push((node_id, value));
+        self.control_edges.push((node_id, self.last_control));
+        self.control_edges.push((self.end_node, node_id));
+
+        Ok(())
+    }
+
+    pub fn vsdg_const(&mut self, value: Constant) -> NodeId {
+        let node_id = self.context.node_id();
+        self.nodes.push((node_id, value.into()));
+
+        node_id
+    }
+
     pub const fn func_id(&self) -> FuncId {
         self.meta.id
     }
 }
 
 impl<'a> FunctionBuilder<'a> {
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         meta: IncompleteFunction,
         blocks: &'a mut Vec<BasicBlockDesc>,
         functions: &'a mut Vec<FunctionDesc>,
         instructions: &'a mut Vec<(InstId, Instruction)>,
-        effect_edges: &'a mut Vec<EffectEdge>,
+        nodes: &'a mut Vec<(NodeId, Node)>,
+        value_edges: &'a mut Vec<Edge>,
+        control_edges: &'a mut Vec<Edge>,
+        effect_edges: &'a mut Vec<Edge>,
         context: &'a Context,
     ) -> Self {
+        let last_control = context.node_id();
+        nodes.push((last_control, Start {}.into()));
+
+        let end_node = context.node_id();
+        nodes.push((end_node, End {}.into()));
+
         Self {
             meta,
             blocks,
             functions,
             instructions,
+            nodes,
+            value_edges,
+            control_edges,
             effect_edges,
             context,
             finished: false,
+            last_control,
+            end_node,
         }
     }
 

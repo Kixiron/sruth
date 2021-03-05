@@ -45,21 +45,23 @@ where
     R: Abelian + ExchangeData + Mul<Output = R> + From<i8>,
     Trace: TraceReader<Key = N, Val = N, Time = S::Timestamp, R = R> + Clone + 'static,
 {
-    roots.scope().iterative::<usize, _, _>(|scope| {
-        let (edges, roots) = (edges.enter(scope), roots.enter(scope));
-        let proposals = SemigroupVariable::new(scope, Product::new(Default::default(), 1));
+    roots
+        .scope()
+        .scoped::<Product<S::Timestamp, usize>, _, _>(name, |scope| {
+            let (edges, roots) = (edges.enter(scope), roots.enter(scope));
+            let proposals = SemigroupVariable::new(scope, Product::new(Default::default(), 1));
 
-        let labels = proposals
-            .concat(&roots)
-            .arrange_by_self()
-            .reduce_abelian::<_, OrdKeySpine<_, _, _>>(name, |_key, _input, output| {
-                output.push(((), R::from(1)));
-            });
+            let labels = proposals
+                .concat(&roots)
+                .arrange_by_self()
+                .reduce_abelian::<_, OrdKeySpine<_, _, _>>(name, |_key, _input, output| {
+                    output.push(((), R::from(1)));
+                });
 
-        let propagate: Collection<_, N, R> =
-            labels.join_core(&edges, |_, &(), node| Some(node.clone()));
-        proposals.set(&propagate);
+            let propagate: Collection<_, N, R> =
+                labels.join_core(&edges, |_, &(), node| Some(node.clone()));
+            proposals.set(&propagate);
 
-        labels.as_collection(|k, &()| k.clone()).leave()
-    })
+            labels.as_collection(|k, &()| k.clone()).leave()
+        })
 }

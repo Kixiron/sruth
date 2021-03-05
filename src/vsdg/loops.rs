@@ -1,9 +1,12 @@
-use crate::vsdg::{Edge, ProgramGraph};
+use crate::{
+    dataflow::operators::SemijoinExt,
+    vsdg::{Edge, ProgramGraph},
+};
 use differential_dataflow::{
     algorithms::graphs::scc,
     difference::Abelian,
     lattice::Lattice,
-    operators::{Iterate, Join, Threshold},
+    operators::{arrange::ArrangeByKey, Iterate, Threshold},
     Collection, ExchangeData,
 };
 use std::ops::Mul;
@@ -18,6 +21,7 @@ where
     scope.region_named("detect loops", |region| {
         // Reduce the control graph to strongly connected components
         let control_edges = scc::strongly_connected(&graph.control_edges.enter_region(region));
+        let arranged_control_edges = control_edges.arrange_by_key();
 
         control_edges
             .iterate(|edges| {
@@ -30,8 +34,9 @@ where
                     }
                 });
 
-                // TODO: We can arrange `control_edges` and keep it around
-                control_edges.enter(&edges.scope()).semijoin(&active)
+                arranged_control_edges
+                    .enter(&edges.scope())
+                    .semijoin(&active)
             })
             .leave_region()
     })

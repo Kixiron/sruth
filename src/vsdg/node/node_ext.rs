@@ -19,6 +19,13 @@ pub trait NodeExt: Any {
         Castable::is(self)
     }
 
+    fn isnt<T>(&self) -> bool
+    where
+        Self: Castable<T>,
+    {
+        !Castable::is(self)
+    }
+
     fn cast<T>(&self) -> Option<&T>
     where
         Self: Castable<T>,

@@ -4,16 +4,19 @@ mod operation;
 mod structure;
 mod value;
 
-pub use control::{Control, Return};
+pub use control::{Branch, Control, Return};
 pub use node_ext::{Castable, NodeExt};
-pub use operation::{Add, Cmp, CmpKind, Operation};
+pub use operation::{Add, Cmp, CmpKind, Operation, Sub};
 pub use structure::{End, Merge, Start};
 pub use value::{Constant, Parameter, Type, Value};
 
 use abomonation_derive::Abomonation;
 use derive_more::From;
 use sruth_derive::{Castable, NodeExt};
-use std::num::NonZeroU64;
+use std::{
+    fmt::{self, Display},
+    num::NonZeroU64,
+};
 
 #[derive(
     Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation, NodeExt, Castable, From,
@@ -35,7 +38,19 @@ macro_rules! create_id {
         $(
             #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
             #[repr(transparent)]
-            pub struct $id(pub NonZeroU64);
+            pub struct $id(crate NonZeroU64);
+
+            impl $id {
+                crate const fn new(id: NonZeroU64) -> Self {
+                    Self(id)
+                }
+            }
+
+            impl Display for $id {
+                fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                    Display::fmt(&self.0, f)
+                }
+            }
         )*
     };
 }

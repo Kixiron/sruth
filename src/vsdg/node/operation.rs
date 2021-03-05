@@ -15,6 +15,7 @@ use std::{
 )]
 pub enum Operation {
     Add(Add),
+    Sub(Sub),
     Cmp(Cmp),
 }
 
@@ -97,6 +98,91 @@ impl Castable<Add> for Node {
 impl From<Add> for Node {
     fn from(add: Add) -> Self {
         Self::Operation(Operation::Add(add))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
+pub struct Sub {
+    pub lhs: NodeId,
+    pub rhs: NodeId,
+}
+
+impl NodeExt for Sub {
+    fn node_name(&self) -> &'static str {
+        "Sub"
+    }
+
+    // TODO: Maybe start using error nodes for failures
+    fn evaluate_with_constants(self, constants: &[(NodeId, Constant)]) -> (Node, Vec<NodeId>) {
+        match constants {
+            [] => {
+                tracing::warn!("tried to evaluate a `Sub` node with no operands");
+                (self.into(), Vec::new())
+            }
+
+            [_] => {
+                tracing::trace!("tried to evaluate a `Sub` node with one operand, skipping");
+                (self.into(), Vec::new())
+            }
+
+            &[(left_id, ref left), (right_id, ref right)]
+                if (left_id == self.lhs && right_id == self.rhs)
+                    || (left_id == self.rhs && right_id == self.lhs) =>
+            {
+                let (left, right) = if left_id == self.lhs && right_id == self.rhs {
+                    (left, right)
+                } else {
+                    (right, left)
+                };
+                let sum = left - right;
+
+                tracing::trace!(
+                    "evaluating a `Sub` node: {:?} + {:?} = {:?}",
+                    left,
+                    right,
+                    sum,
+                );
+
+                (sum.into(), vec![left_id, right_id])
+            }
+
+            [rest @ ..] => {
+                tracing::error!(
+                    "tried to evaluate a `Sub` node with {} operands: {:?}, expected [{:?}, {:?}]",
+                    rest.len(),
+                    rest,
+                    self.lhs,
+                    self.rhs,
+                );
+                debug_assert_eq!(
+                    rest.len(),
+                    2,
+                    "incorrect number of operands passed to a `Sub` node",
+                );
+
+                (self.into(), Vec::new())
+            }
+        }
+    }
+}
+
+impl Castable<Sub> for Node {
+    fn is(&self) -> bool {
+        matches!(self, Self::Operation(Operation::Sub(_)))
+    }
+
+    unsafe fn cast_unchecked(&self) -> &Sub {
+        if let Self::Operation(Operation::Sub(sub)) = self {
+            sub
+        } else {
+            hint::unreachable_unchecked()
+        }
+    }
+}
+
+impl From<Sub> for Node {
+    fn from(sub: Sub) -> Self {
+        Self::Operation(Operation::Sub(sub))
     }
 }
 

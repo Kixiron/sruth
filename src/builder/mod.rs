@@ -17,6 +17,10 @@ use crate::{
         instruction::Call,
         BasicBlock, FuncId, Function, Ident, InstId, Instruction, InstructionExt, Type,
     },
+    vsdg::{
+        node::{Node, NodeId},
+        Edge, ProgramInputs,
+    },
 };
 use abomonation_derive::Abomonation;
 use differential_dataflow::{difference::Semigroup, lattice::Lattice};
@@ -27,13 +31,16 @@ pub struct Builder {
     blocks: Vec<BasicBlockDesc>,
     functions: Vec<FunctionDesc>,
     instructions: Vec<(InstId, Instruction)>,
-    effect_edges: Vec<EffectEdge>,
     context: Arc<Context>,
     finished: bool,
+
+    nodes: Vec<(NodeId, Node)>,
+    value_edges: Vec<Edge>,
+    control_edges: Vec<Edge>,
+    effect_edges: Vec<Edge>,
 }
 
 // Public API
-// TODO: Allocate function
 impl Builder {
     pub fn function<T, F>(&mut self, return_ty: T, build: F) -> BuildResult<FuncId>
     where
@@ -212,6 +219,40 @@ impl Builder {
 
         Ok(())
     }
+
+    pub fn vsdg_finish<T, R>(mut self, input: &mut ProgramInputs<T, R>, time: T) -> BuildResult<()>
+    where
+        T: Timestamp + Lattice + Clone,
+        R: Semigroup + From<i8>,
+    {
+        if cfg!(debug_assertions) && self.finished {
+            self.finished = true;
+            panic!("finished a builder twice??");
+        }
+
+        self.finished = true;
+        tracing::trace!("finished a builder, giving all data to the dataflow");
+
+        for node in self.nodes.drain(..) {
+            input.nodes.update_at(node, time.clone(), R::from(1));
+        }
+
+        for edge in self.value_edges.drain(..) {
+            input.value_edges.update_at(edge, time.clone(), R::from(1));
+        }
+
+        for edge in self.control_edges.drain(..) {
+            input
+                .control_edges
+                .update_at(edge, time.clone(), R::from(1));
+        }
+
+        for edge in self.effect_edges.drain(..) {
+            input.effect_edges.update_at(edge, time.clone(), R::from(1));
+        }
+
+        Ok(())
+    }
 }
 
 // Private API
@@ -221,9 +262,13 @@ impl Builder {
             blocks: Vec::with_capacity(1024),
             functions: Vec::with_capacity(512),
             instructions: Vec::with_capacity(2048),
-            effect_edges: Vec::with_capacity(1024),
             context,
             finished: false,
+
+            nodes: Vec::with_capacity(2048),
+            value_edges: Vec::with_capacity(1024),
+            control_edges: Vec::with_capacity(1024),
+            effect_edges: Vec::with_capacity(1024),
         }
     }
 
@@ -257,6 +302,9 @@ impl Builder {
                 &mut self.blocks,
                 &mut self.functions,
                 &mut self.instructions,
+                &mut self.nodes,
+                &mut self.value_edges,
+                &mut self.control_edges,
                 &mut self.effect_edges,
                 &*self.context,
             );

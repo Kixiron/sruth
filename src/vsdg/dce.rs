@@ -69,7 +69,6 @@ where
     S::Timestamp: Lattice,
     R: Abelian + ExchangeData + Mul<Output = R>,
 {
-    #[allow(non_snake_case)]
     scope.scoped::<AltNeu<_>, _, _>("delta-join culling edges", |inner| {
         let neu = |time: &AltNeu<_>| {
             let mut time = time.clone();
@@ -98,24 +97,24 @@ where
 
         // WCOJ-eligible
         // d/d(value_edges(a, b)) := d(value_edges(a, b)) ⋈ retained(a) ⋈ retained(b)
-        let d_value_edgesAB = d_edges
+        let d_value_edges_ab = d_edges
             .join_core(&retained_neu, |&a, &b, _| Some((b, a)))
             .join_core(&retained_neu, |&b, &a, _| Some((a, b)));
 
         // WCOJ-ineligible: b only introduced in value_edges(a,b)
         // d/d(retained(a)) := d(retained(a)) ⋈ value_edges(a, b) ⋈ retained(b)
-        let d_retainedA = d_retained
+        let d_retained_a = d_retained
             .join_core(&edges_forward_alt, |&a, _, &b| Some((b, a)))
             .join_core(&retained_neu, |&b, &a, _| Some((a, b)));
 
         // WCOJ-ineligible: a only introduced in value_edges(a,b)
         // d/d(retained(b)) := d(retained(b)) ⋈ value_edges(a, b) ⋈ retained(a)
-        let d_retainedB = d_retained
+        let d_retained_b = d_retained
             .join_core(&edges_reverse_alt, |&b, _, &a| Some((a, b)))
             .join_core(&retained_alt, |&a, &b, _| Some((a, b)));
 
-        d_value_edgesAB
-            .concatenate(vec![d_retainedA, d_retainedB])
+        d_value_edges_ab
+            .concatenate(vec![d_retained_a, d_retained_b])
             .integrate()
     })
 }
