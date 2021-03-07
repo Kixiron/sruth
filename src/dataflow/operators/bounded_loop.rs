@@ -16,6 +16,16 @@ where
 {
     fn bounded_loop<T, F>(&self, max_iterations: T, looped: F) -> Self
     where
+        Self: Sized,
+        T: Semigroup + Timestamp<Summary = T> + From<i8>,
+        for<'a> F:
+            FnOnce(&Collection<Iterative<'a, S, T>, D, R>) -> Collection<Iterative<'a, S, T>, D, R>,
+    {
+        self.bounded_loop_named("BoundedLoop", max_iterations, looped)
+    }
+
+    fn bounded_loop_named<T, F>(&self, name: &str, max_iterations: T, looped: F) -> Self
+    where
         T: Semigroup + Timestamp<Summary = T> + From<i8>,
         for<'a> F:
             FnOnce(&Collection<Iterative<'a, S, T>, D, R>) -> Collection<Iterative<'a, S, T>, D, R>;
@@ -27,13 +37,13 @@ where
     D: Data,
     R: Semigroup,
 {
-    fn bounded_loop<T, F>(&self, max_iterations: T, looped: F) -> Self
+    fn bounded_loop_named<T, F>(&self, name: &str, max_iterations: T, looped: F) -> Self
     where
         T: Semigroup + Timestamp<Summary = T> + From<i8>,
         for<'a> F:
             FnOnce(&Collection<Iterative<'a, S, T>, D, R>) -> Collection<Iterative<'a, S, T>, D, R>,
     {
-        self.scope().iterative(move |scope| {
+        self.scope().scoped(name, move |scope| {
             let (handle, cycle) = scope.loop_variable(T::from(1));
 
             let collection = looped(&self.enter(scope).concat(&cycle.as_collection()));

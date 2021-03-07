@@ -43,12 +43,12 @@ where
     where
         F: Fn(&D) -> u64 + 'static,
     {
-        self.arrange_by_self_exchange(route)
+        self.arrange_by_self_exchange_named("Arrange: DistinctExchange", route)
             .threshold_named(name, |_, _| R2::from(1))
     }
 
     fn distinct_pipelined_named(&self, name: &str) -> Self::Output {
-        self.arrange_by_self_pipelined()
+        self.arrange_by_self_pipelined_named("Arrange: DistinctPipelined")
             .threshold_named(name, |_, _| R2::from(1))
     }
 }

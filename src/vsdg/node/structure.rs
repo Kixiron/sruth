@@ -39,3 +39,16 @@ impl NodeExt for Merge {
         (self.into(), Vec::new())
     }
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
+pub struct Place;
+
+impl NodeExt for Place {
+    fn node_name(&self) -> &'static str {
+        "Place"
+    }
+
+    fn evaluate_with_constants(self, _constants: &[(NodeId, Constant)]) -> (Node, Vec<NodeId>) {
+        (self.into(), Vec::new())
+    }
+}

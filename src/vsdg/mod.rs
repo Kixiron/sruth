@@ -1,3 +1,4 @@
+mod cse;
 mod dce;
 mod dot;
 mod folding;
@@ -5,7 +6,7 @@ mod graph;
 mod loops;
 pub mod node;
 
-pub use graph::{Edge, ProgramGraph, ProgramInputs};
+pub use graph::{Edge, ProgramGraph, ProgramInputs, ProgramVariable};
 
 #[test]
 #[allow(clippy::many_single_char_names)]
@@ -14,18 +15,21 @@ fn vsdg_test() {
         builder::Context,
         dataflow::{Diff, Time},
     };
-    use node::{
-        Add, Branch, Constant, Control, End, FuncId, Function, Node, NodeId, Operation, Parameter,
-        Return, Start, Type, Value,
+    use node::{Constant, Type};
+    use std::sync::Arc;
+    use timely::{
+        dataflow::{ProbeHandle, Scope},
+        order::Product,
+        Config,
     };
-    use std::{num::NonZeroU64, sync::Arc};
-    use timely::{dataflow::ProbeHandle, Config};
 
     crate::tests::init_logging();
 
     let context = Arc::new(Context::new());
 
     let (sender, receiver) = crossbeam_channel::unbounded();
+    // let (inner_sender, inner_receiver) = crossbeam_channel::unbounded();
+
     timely::execute(Config::thread(), move |worker| {
         if let Ok(addr) = std::env::var("DIFFERENTIAL_LOG_ADDR") {
             if !addr.is_empty() {
@@ -42,13 +46,37 @@ fn vsdg_test() {
             let (graph, inputs) = ProgramGraph::<_, Diff>::new(scope);
             graph.render_graph("unprocessed", sender.clone());
 
+            let graph = dce::dce(scope, &graph);
+            graph.render_graph("initial dce", sender.clone());
+
+            // let graph = scope.scoped::<Product<_, Time>, _, _>("main loop", |scope| {
+            //     let variable =
+            //         ProgramVariable::new(graph.enter(scope), Product::new(Default::default(), 1));
+            //     let graph = ProgramGraph::from(&variable);
+            //
+            //     let graph = folding::constant_folding(scope, &graph);
+            //     let graph = cse::cse(scope, &graph);
+            //     let graph = dce::dce(scope, &graph);
+            //
+            //     let _loops = loops::detect_loops(scope, &graph)
+            //         .inspect(|x| tracing::trace!("looping edge: {:?}", x));
+            //
+            //     let result = graph.consolidate();
+            //     variable.set(&result);
+            //
+            //     result.leave()
+            // });
+
             let graph = folding::constant_folding(scope, &graph);
             graph.render_graph("post folding", sender.clone());
+
+            let graph = cse::cse(scope, &graph);
+            graph.render_graph("post cse", sender.clone());
 
             let graph = dce::dce(scope, &graph);
             graph.render_graph("post dce", sender.clone());
 
-            let loops = loops::detect_loops(scope, &graph)
+            let _loops = loops::detect_loops(scope, &graph)
                 .inspect(|x| tracing::trace!("looping edge: {:?}", x));
 
             graph.render_graph("output", sender.clone());
@@ -73,9 +101,19 @@ fn vsdg_test() {
                     let zero = func.vsdg_const(Constant::Uint8(0));
                     let add_zero = func.vsdg_add(add, zero)?;
 
+                    let zero = func.vsdg_const(Constant::Uint8(0));
                     let add_zero_again = func.vsdg_add(zero, add_zero)?;
 
-                    func.vsdg_return(add_zero_again)
+                    let sub = func.vsdg_sub(add_zero_again, add_zero_again)?;
+
+                    // let mut last = add_zero_again;
+                    // for i in 0..u8::max_value() {
+                    //     let lhs = func.vsdg_const(Constant::Uint8(i));
+                    //
+                    //     last = func.vsdg_add(lhs, last)?;
+                    // }
+
+                    func.vsdg_return(sub)
                 })
                 .unwrap();
 
@@ -168,4 +206,5 @@ fn vsdg_test() {
     .unwrap();
 
     dot::render_graph(receiver);
+    // dot::render_graph(inner_receiver);
 }

@@ -39,12 +39,12 @@ use timely::{
     progress::frontier::AntichainRef,
     Config,
 };
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_subscriber::{fmt::time::uptime, layer::SubscriberExt, util::SubscriberInitExt};
 
 pub(crate) fn init_logging() {
     let _ = tracing_subscriber::registry()
         .with(tracing_subscriber::filter::LevelFilter::TRACE)
-        .with(tracing_subscriber::fmt::layer())
+        .with(tracing_subscriber::fmt::layer().with_timer(uptime()))
         .try_init();
 }
 

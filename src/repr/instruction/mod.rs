@@ -126,9 +126,9 @@ macro_rules! impl_instruction {
                 }
             }
 
-            fn used_values(&self) -> Vec<&Value> {
+            fn used_values_into<'a>(&'a self, buf: &mut Vec<&'a Value>) {
                 match self {
-                    $(Self::$type(value) => value.used_values(),)*
+                    $(Self::$type(value) => value.used_values_into(buf),)*
                 }
             }
 

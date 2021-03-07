@@ -1,26 +1,32 @@
 use crate::{
     dataflow::operators::{CrossbeamExtractor, CrossbeamPusher},
     vsdg::{
-        node::{Constant, FuncId, Function, Node, NodeExt, NodeId, Operation, Value},
+        node::{Constant, FuncId, Function, Node, NodeExt, NodeId, Value},
         Edge, ProgramGraph,
     },
 };
 use abomonation_derive::Abomonation;
 use crossbeam_channel::{Receiver, Sender};
-use differential_dataflow::{difference::Semigroup, lattice::Lattice, ExchangeData};
+use differential_dataflow::{
+    difference::{Monoid, Semigroup},
+    lattice::Lattice,
+    ExchangeData,
+};
 use petgraph::{dot::Dot, Graph};
 use std::{
     cmp::Ordering,
     collections::HashMap,
-    fs::OpenOptions,
+    fmt::Debug,
+    fs::{self, OpenOptions},
+    hash::Hash,
     io::Write,
+    iter::Step,
     process::Command,
-    time::{SystemTime, UNIX_EPOCH},
 };
 use timely::dataflow::{
     operators::{
         capture::{Event, EventPusher},
-        Capture, Concatenate, Map,
+        Capture, Map,
     },
     Scope, ScopeParent,
 };
@@ -52,7 +58,7 @@ where
 
     pub fn capture_into<P>(&self, name: String, pusher: P)
     where
-        P: EventPusher<S::Timestamp, (String, (GraphNode, S::Timestamp, R))> + Clone + 'static,
+        P: EventPusher<S::Timestamp, (String, (GraphNode, S::Timestamp, R))> + 'static,
     {
         self.value_edges
             .map(GraphNode::ValueEdge)
@@ -65,67 +71,72 @@ where
             ])
             .inner
             .map(move |node| (name.clone(), node))
-            .capture_into(pusher.clone());
+            .capture_into(pusher);
     }
 }
 
-pub fn render_graph<T, R>(receiver: Receiver<Event<T, (String, (GraphNode, T, R))>>) {
+pub fn render_graph<T, R>(receiver: Receiver<Event<T, (String, (GraphNode, T, R))>>)
+where
+    T: Eq + Hash + Debug + Clone,
+    R: Monoid + Step,
+{
     let mut graphs = HashMap::new();
     for event in CrossbeamExtractor::new(receiver) {
         if let Event::Messages(_, data) = event {
             for (graph_name, node) in data {
                 graphs
-                    .entry(graph_name)
+                    .entry((node.1.clone(), graph_name))
                     .or_insert_with(|| Vec::with_capacity(512))
                     .push(node);
             }
         }
     }
 
-    for (graph_name, mut graph_data) in graphs {
+    for ((timestamp, graph_name), mut graph_data) in graphs {
         graph_data.sort_by(|(a, _, _), (b, _, _)| {
             match (
                 matches!(a, GraphNode::Node(_)),
                 matches!(b, GraphNode::Node(_)),
             ) {
-                (true, true) => Ordering::Equal,
+                (true, true) | (false, false) => Ordering::Equal,
                 (true, false) => Ordering::Less,
                 (false, true) => Ordering::Greater,
-                (false, false) => Ordering::Equal,
             }
         });
 
         let (mut graph, mut node_ids) = (Graph::new(), HashMap::new());
-        for (node, _time, _diff) in graph_data {
-            match node {
-                GraphNode::ValueEdge((src, dest)) => {
-                    let src = *node_ids.get(&src).unwrap();
-                    let dest = *node_ids.get(&dest).unwrap();
+        for (node, _time, diff) in graph_data {
+            for _ in R::zero()..diff {
+                match node {
+                    GraphNode::ValueEdge((src, dest)) => {
+                        let src = *node_ids.get(&src).unwrap();
+                        let dest = *node_ids.get(&dest).unwrap();
 
-                    graph.add_edge(src, dest, EdgeKind::Value);
+                        graph.add_edge(src, dest, EdgeKind::Value);
+                    }
+
+                    GraphNode::EffectEdge((src, dest)) => {
+                        let src = *node_ids.get(&src).unwrap();
+                        let dest = *node_ids.get(&dest).unwrap();
+
+                        graph.add_edge(src, dest, EdgeKind::Effect);
+                    }
+
+                    GraphNode::ControlEdge((src, dest)) => {
+                        let src = *node_ids.get(&src).unwrap();
+                        let dest = *node_ids.get(&dest).unwrap();
+
+                        graph.add_edge(src, dest, EdgeKind::Control);
+                    }
+
+                    GraphNode::Node((node_id, ref node)) => {
+                        let graph_id = graph.add_node(node.clone());
+                        node_ids.insert(node_id, graph_id);
+                    }
+
+                    // TODO
+                    GraphNode::FunctionNode(_) | GraphNode::Function(_) => {}
                 }
-
-                GraphNode::EffectEdge((src, dest)) => {
-                    let src = *node_ids.get(&src).unwrap();
-                    let dest = *node_ids.get(&dest).unwrap();
-
-                    graph.add_edge(src, dest, EdgeKind::Effect);
-                }
-
-                GraphNode::ControlEdge((src, dest)) => {
-                    let src = *node_ids.get(&src).unwrap();
-                    let dest = *node_ids.get(&dest).unwrap();
-
-                    graph.add_edge(src, dest, EdgeKind::Control);
-                }
-
-                GraphNode::Node((node_id, node)) => {
-                    let graph_id = graph.add_node(node);
-                    node_ids.insert(node_id, graph_id);
-                }
-
-                // TODO
-                GraphNode::FunctionNode(_) | GraphNode::Function(_) => {}
             }
         }
 
@@ -169,14 +180,14 @@ pub fn render_graph<T, R>(receiver: Receiver<Event<T, (String, (GraphNode, T, R)
                         node.node_name(),
                     )
                 }
+                Node::Place(_) => "shape = point".to_owned(),
             },
         );
 
-        let system_time = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let name = format!("target/debug/{}.dot", graph_name);
+        let _ = fs::remove_dir_all(format!("target/debug/{}", graph_name));
+        fs::create_dir_all(format!("target/debug/{}", graph_name)).unwrap();
+
+        let name = format!("target/debug/{}/ts-{:?}.dot", graph_name, timestamp);
 
         {
             let mut file = OpenOptions::new()
@@ -193,6 +204,13 @@ pub fn render_graph<T, R>(receiver: Receiver<Event<T, (String, (GraphNode, T, R)
             .arg(&name)
             .args(&["-Tpng", "-o"])
             .arg(name.replace(".dot", ".png"))
+            .status()
+            .unwrap();
+
+        Command::new("dot")
+            .arg(&name)
+            .args(&["-Tsvg", "-o"])
+            .arg(name.replace(".dot", ".svg"))
             .status()
             .unwrap();
     }

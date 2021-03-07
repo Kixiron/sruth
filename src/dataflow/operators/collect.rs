@@ -1,10 +1,11 @@
-use crate::repr::{
-    Cast, InstId, Instruction, InstructionExt, RawCast, Type, TypedVar, Value, VarId,
+use std::mem;
+
+use crate::{
+    dataflow::operators::{BufferedFlatMap, FilterMap, MapExt},
+    repr::{Cast, InstId, Instruction, InstructionExt, RawCast, Type, TypedVar, Value, VarId},
 };
 use differential_dataflow::{difference::Semigroup, Collection, Data};
 use timely::dataflow::Scope;
-
-use super::FilterMap;
 
 pub trait CollectUsages {
     type Output;
@@ -24,12 +25,8 @@ where
     type Output = Collection<S, (TypedVar, InstId), R>;
 
     fn collect_usages_named(&self, name: &str) -> Self::Output {
-        self.scope().region_named(name, |region| {
-            let stream = self.enter_region(region);
-
-            stream
-                .flat_map(|(id, inst)| inst.used_vars().into_iter().map(move |var| (var, id)))
-                .leave_region()
+        self.buffered_flat_map_named(name, |(id, inst), buf| {
+            buf.extend(inst.used_vars().into_iter().map(move |var| (var, id)));
         })
     }
 }
@@ -52,12 +49,8 @@ where
     type Output = Collection<S, (TypedVar, InstId), R>;
 
     fn collect_declarations_named(&self, name: &str) -> Self::Output {
-        self.scope().region_named(name, |region| {
-            let stream = self.enter_region(region);
-
-            stream
-                .map(|(id, inst)| (TypedVar::new(inst.dest(), inst.dest_type()), id))
-                .leave_region()
+        self.map_named(name, |(id, inst)| {
+            (TypedVar::new(inst.dest(), inst.dest_type()), id)
         })
     }
 }
@@ -80,13 +73,7 @@ where
     type Output = Collection<S, (VarId, Type), R>;
 
     fn collect_var_types_named(&self, name: &str) -> Self::Output {
-        self.scope().region_named(name, |region| {
-            let stream = self.enter_region(region);
-
-            stream
-                .map(|(_id, inst)| (inst.dest(), inst.dest_type()))
-                .leave_region()
-        })
+        self.map_named(name, |(_id, inst)| (inst.dest(), inst.dest_type()))
     }
 }
 
@@ -108,18 +95,15 @@ where
     type Output = Collection<S, (InstId, Value), R>;
 
     fn collect_values_named(&self, name: &str) -> Self::Output {
-        self.scope().region_named(name, |region| {
-            let stream = self.enter_region(region);
+        let mut buffer = Vec::new();
 
-            stream
-                .flat_map(|(id, inst)| {
-                    inst.used_values()
-                        .into_iter()
-                        .cloned()
-                        .map(move |val| (id, val))
-                        .collect::<Vec<_>>()
-                })
-                .leave_region()
+        self.buffered_flat_map_named(name, move |(id, inst), buf| {
+            // Safety: `buffer` is cleared before the values go out of scope
+            inst.used_values_into(unsafe {
+                mem::transmute::<&mut Vec<&Value>, &mut Vec<&Value>>(&mut buffer)
+            });
+
+            buf.extend(buffer.drain(..).cloned().map(move |val| (id, val)));
         })
     }
 }

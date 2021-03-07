@@ -7,7 +7,7 @@ mod value;
 pub use control::{Branch, Control, Return};
 pub use node_ext::{Castable, NodeExt};
 pub use operation::{Add, Cmp, CmpKind, Operation, Sub};
-pub use structure::{End, Merge, Start};
+pub use structure::{End, Merge, Place, Start};
 pub use value::{Constant, Parameter, Type, Value};
 
 use abomonation_derive::Abomonation;
@@ -28,6 +28,7 @@ pub enum Node {
     Start(Start),
     End(End),
     Merge(Merge),
+    Place(Place),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
@@ -40,6 +41,7 @@ macro_rules! create_id {
             #[repr(transparent)]
             pub struct $id(crate NonZeroU64);
 
+            #[allow(dead_code)]
             impl $id {
                 crate const fn new(id: NonZeroU64) -> Self {
                     Self(id)

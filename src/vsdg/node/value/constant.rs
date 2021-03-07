@@ -53,7 +53,9 @@ impl Add<&Constant> for &Constant {
 
     fn add(self, rhs: &Constant) -> Self::Output {
         match (self, rhs) {
-            (&Constant::Uint8(left), &Constant::Uint8(right)) => Constant::Uint8(left + right),
+            (&Constant::Uint8(left), &Constant::Uint8(right)) => {
+                Constant::Uint8(left.wrapping_add(right))
+            }
             _ => panic!(),
         }
     }

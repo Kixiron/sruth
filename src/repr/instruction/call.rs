@@ -61,8 +61,8 @@ impl InstructionExt for Call {
             .collect()
     }
 
-    fn used_values(&self) -> Vec<&Value> {
-        self.args.iter().collect()
+    fn used_values_into<'a>(&'a self, buf: &mut Vec<&'a Value>) {
+        buf.extend(self.args.iter());
     }
 
     fn used_values_mut(&mut self) -> Vec<&mut Value> {

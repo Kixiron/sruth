@@ -1,9 +1,9 @@
 use crate::vsdg::node::{FuncId, Function, Node, NodeId};
 use differential_dataflow::{
-    difference::Semigroup,
+    difference::{Abelian, Semigroup},
     input::{Input, InputSession},
     lattice::Lattice,
-    operators::Consolidate,
+    operators::{iterate::Variable, Consolidate},
     Collection, ExchangeData,
 };
 use timely::{
@@ -166,6 +166,89 @@ where
             nodes: self.nodes.leave_region(),
             function_nodes: self.function_nodes.leave_region(),
             functions: self.functions.leave_region(),
+        }
+    }
+}
+
+impl<S, R> From<&ProgramVariable<S, R>> for ProgramGraph<S, R>
+where
+    S: Scope,
+    S::Timestamp: Lattice,
+    R: Abelian,
+{
+    fn from(program: &ProgramVariable<S, R>) -> Self {
+        Self {
+            value_edges: program.value_edges.clone(),
+            effect_edges: program.effect_edges.clone(),
+            control_edges: program.control_edges.clone(),
+            nodes: program.nodes.clone(),
+            function_nodes: program.function_nodes.clone(),
+            functions: program.functions.clone(),
+        }
+    }
+}
+
+pub struct ProgramVariable<S, R>
+where
+    S: Scope,
+    S::Timestamp: Lattice,
+    R: Abelian,
+{
+    pub value_edges: Variable<S, Edge, R>,
+    pub effect_edges: Variable<S, Edge, R>,
+    pub control_edges: Variable<S, Edge, R>,
+    pub nodes: Variable<S, (NodeId, Node), R>,
+    pub function_nodes: Variable<S, (NodeId, FuncId), R>,
+    pub functions: Variable<S, (FuncId, Function), R>,
+}
+
+impl<S, R> ProgramVariable<S, R>
+where
+    S: Scope,
+    S::Timestamp: Lattice,
+    R: Abelian,
+{
+    pub fn new(graph: ProgramGraph<S, R>, summary: <S::Timestamp as Timestamp>::Summary) -> Self {
+        Self {
+            value_edges: Variable::new_from(graph.value_edges, summary.clone()),
+            effect_edges: Variable::new_from(graph.effect_edges, summary.clone()),
+            control_edges: Variable::new_from(graph.control_edges, summary.clone()),
+            nodes: Variable::new_from(graph.nodes, summary.clone()),
+            function_nodes: Variable::new_from(graph.function_nodes, summary.clone()),
+            functions: Variable::new_from(graph.functions, summary),
+        }
+    }
+
+    pub fn set(self, result: &ProgramGraph<S, R>) -> ProgramGraph<S, R> {
+        ProgramGraph {
+            value_edges: self.value_edges.set(&result.value_edges),
+            control_edges: self.control_edges.set(&result.control_edges),
+            effect_edges: self.effect_edges.set(&result.effect_edges),
+            nodes: self.nodes.set(&result.nodes),
+            function_nodes: self.function_nodes.set(&result.function_nodes),
+            functions: self.functions.set(&result.functions),
+        }
+    }
+
+    pub fn set_concat(self, result: &ProgramGraph<S, R>) -> ProgramGraph<S, R> {
+        ProgramGraph {
+            value_edges: self.value_edges.set_concat(&result.value_edges),
+            control_edges: self.control_edges.set_concat(&result.control_edges),
+            effect_edges: self.effect_edges.set_concat(&result.effect_edges),
+            nodes: self.nodes.set_concat(&result.nodes),
+            function_nodes: self.function_nodes.set_concat(&result.function_nodes),
+            functions: self.functions.set_concat(&result.functions),
+        }
+    }
+
+    pub fn program(&self) -> ProgramGraph<S, R> {
+        ProgramGraph {
+            value_edges: self.value_edges.clone(),
+            control_edges: self.control_edges.clone(),
+            effect_edges: self.effect_edges.clone(),
+            nodes: self.nodes.clone(),
+            function_nodes: self.function_nodes.clone(),
+            functions: self.functions.clone(),
         }
     }
 }

@@ -65,8 +65,9 @@ impl InstructionExt for Cmp {
             .collect()
     }
 
-    fn used_values(&self) -> Vec<&Value> {
-        vec![&self.lhs, &self.rhs]
+    fn used_values_into<'a>(&'a self, buf: &mut Vec<&'a Value>) {
+        buf.push(&self.lhs);
+        buf.push(&self.rhs);
     }
 
     fn used_values_mut(&mut self) -> Vec<&mut Value> {

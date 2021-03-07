@@ -83,8 +83,16 @@ pub trait InstructionExt: EstimateAsm + IRDisplay {
 
     fn used_vars(&self) -> Vec<TypedVar>;
 
-    fn used_values(&self) -> Vec<&Value>;
+    // TODO: Use `AppendOnlyVec`
+    fn used_values_into<'a>(&'a self, buf: &mut Vec<&'a Value>);
 
+    fn used_values(&self) -> Vec<&Value> {
+        let mut buf = Vec::new();
+        self.used_values_into(&mut buf);
+        buf
+    }
+
+    // TODO: Make an `_into()` variant of this
     fn used_values_mut(&mut self) -> Vec<&mut Value>;
 }
 

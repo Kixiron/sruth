@@ -71,12 +71,13 @@ where
         self.inner
             .buffered_flat_map_named(name, move |(data, time, diff), buffer| {
                 logic(data, &mut user_buffer);
+
                 buffer.extend(
                     user_buffer
                         .0
                         .drain(..)
                         .map(|data| (data, time.clone(), diff.clone())),
-                )
+                );
             })
             .as_collection()
     }

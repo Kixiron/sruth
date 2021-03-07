@@ -24,6 +24,29 @@ pub trait SemijoinExt<S, K, V, R, R2, Other> {
         <R as Mul<R2>>::Output: Semigroup;
 }
 
+impl<S, K, V, R, R2, Trace1, Trace2> SemijoinExt<S, K, V, R, R2, Arranged<S, Trace2>>
+    for Arranged<S, Trace1>
+where
+    S: Scope,
+    S::Timestamp: Lattice,
+    R2: Semigroup,
+    Trace1: TraceReader<Time = S::Timestamp, Key = K, Val = V, R = R> + Clone + 'static,
+    Trace2: TraceReader<Time = S::Timestamp, Key = K, Val = (), R = R2> + Clone + 'static,
+{
+    fn semijoin(&self, other: &Arranged<S, Trace2>) -> Collection<S, (K, V), <R as Mul<R2>>::Output>
+    where
+        S: Scope,
+        K: ExchangeData + Hashable,
+        V: ExchangeData,
+        R: ExchangeData + Semigroup,
+        R2: ExchangeData + Semigroup,
+        R: Mul<R2>,
+        <R as Mul<R2>>::Output: Semigroup,
+    {
+        self.join_core(&other, |k, v, _| Some((k.clone(), v.clone())))
+    }
+}
+
 impl<S, K, V, R, R2, Trace> SemijoinExt<S, K, V, R, R2, Collection<S, K, R2>> for Arranged<S, Trace>
 where
     S: Scope,

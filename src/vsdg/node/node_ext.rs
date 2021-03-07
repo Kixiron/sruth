@@ -45,5 +45,9 @@ pub trait NodeExt: Any {
 pub trait Castable<T> {
     fn is(&self) -> bool;
 
+    /// # Safety
+    ///
+    /// `T` must be the same type as the underlying item
+    ///
     unsafe fn cast_unchecked(&self) -> &T;
 }

@@ -43,9 +43,10 @@ impl NodeExt for Add {
                 (self.into(), Vec::new())
             }
 
-            &[(left_id, ref left), (right_id, ref right)]
-                if (left_id == self.lhs && right_id == self.rhs)
-                    || (left_id == self.rhs && right_id == self.lhs) =>
+            &[(left_id, ref left), (right_id, ref right)] =>
+                // FIXME: Update rhs and lhs when folding
+                // if (left_id == self.lhs && right_id == self.rhs)
+                //     || (left_id == self.rhs && right_id == self.lhs) =>
             {
                 let sum = left + right;
                 tracing::trace!(

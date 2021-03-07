@@ -83,8 +83,8 @@ impl InstructionExt for Bitcast {
         self.source.as_typed_var().into_iter().collect()
     }
 
-    fn used_values(&self) -> Vec<&Value> {
-        vec![&self.source]
+    fn used_values_into<'a>(&'a self, buf: &mut Vec<&'a Value>) {
+        buf.push(&self.source);
     }
 
     fn used_values_mut(&mut self) -> Vec<&mut Value> {

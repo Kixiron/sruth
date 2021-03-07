@@ -315,8 +315,9 @@ macro_rules! impl_binop {
                         .collect()
                 }
 
-                fn used_values(&self) -> Vec<&Value> {
-                    vec![&self.lhs, &self.rhs]
+                fn used_values_into<'a>(&'a self, buf: &mut Vec<&'a Value>) {
+                    buf.push(&self.lhs);
+                    buf.push(&self.rhs);
                 }
 
                 fn used_values_mut(&mut self) -> Vec<&mut Value> {
@@ -409,9 +410,9 @@ macro_rules! impl_binop {
                 }
             }
 
-            fn used_values(&self) -> Vec<&Value> {
+            fn used_values_into<'a>(&'a self, buf: &mut Vec<&'a Value>) {
                 match self {
-                    $(Self::$type(op) => op.used_values(),)*
+                    $(Self::$type(op) => op.used_values_into(buf),)*
                 }
             }
 

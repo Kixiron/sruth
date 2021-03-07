@@ -1,6 +1,7 @@
-use differential_dataflow::{difference::Semigroup, Collection};
+use super::MapExt;
+use differential_dataflow::{difference::Semigroup, AsCollection, Collection};
 use timely::{
-    dataflow::{operators::Map, Scope, Stream},
+    dataflow::{Scope, Stream},
     Data,
 };
 
@@ -19,8 +20,7 @@ where
     type Output = Stream<S, K>;
 
     fn keys(&self) -> Self::Output {
-        // TODO: Map named
-        self.map(|(key, _value)| key)
+        self.map_named("Keys", |(key, _value)| key)
     }
 }
 
@@ -34,7 +34,8 @@ where
     type Output = Collection<S, K, R>;
 
     fn keys(&self) -> Self::Output {
-        // TODO: Map named
-        self.map(|(key, _value)| key)
+        self.inner
+            .map_named("Keys", |((key, _value), time, diff)| (key, time, diff))
+            .as_collection()
     }
 }

@@ -1,3 +1,5 @@
+use std::{fmt::Debug, panic::Location};
+
 use differential_dataflow::{difference::Semigroup, Collection, Data};
 use timely::dataflow::{operators::Inspect, Scope, Stream};
 
@@ -7,6 +9,24 @@ pub trait InspectExt {
     fn debug_inspect<F>(&self, inspect: F) -> Self
     where
         F: FnMut(&Self::Value) + 'static;
+
+    #[track_caller]
+    fn debug(&self) -> Self
+    where
+        Self: Sized,
+        Self::Value: Debug,
+    {
+        let location = Location::caller();
+        self.debug_inspect(move |value| {
+            eprintln!(
+                "[{}:{}:{}] {:?}",
+                location.file(),
+                location.line(),
+                location.column(),
+                value,
+            );
+        })
+    }
 }
 
 impl<S, D, R> InspectExt for Collection<S, D, R>
