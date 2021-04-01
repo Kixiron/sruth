@@ -12,6 +12,7 @@ use std::{
 pub enum Constant {
     Uint8(u8),
     Bool(bool),
+    Array(Vec<Constant>),
 }
 
 impl Constant {
@@ -35,6 +36,10 @@ impl NodeExt for Constant {
 
     fn evaluate_with_constants(self, _constants: &[(NodeId, Constant)]) -> (Node, Vec<NodeId>) {
         (self.into(), Vec::new())
+    }
+
+    fn inline_cost(&self) -> isize {
+        0
     }
 }
 

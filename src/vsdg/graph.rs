@@ -1,11 +1,21 @@
-use crate::vsdg::node::{FuncId, Function, Node, NodeId};
+use crate::{
+    dataflow::operators::FilterMap,
+    vsdg::node::{End, FuncId, Function, Node, NodeExt, NodeId},
+};
 use differential_dataflow::{
+    algorithms::graphs::propagate,
     difference::{Abelian, Semigroup},
     input::{Input, InputSession},
     lattice::Lattice,
-    operators::{iterate::Variable, Consolidate},
-    Collection, ExchangeData,
+    operators::{
+        arrange::{ArrangeByKey, Arranged, TraceAgent},
+        iterate::Variable,
+        Consolidate, Join,
+    },
+    trace::implementations::ord::OrdValSpine,
+    Collection, ExchangeData, Hashable,
 };
+use std::ops::Mul;
 use timely::{
     dataflow::{operators::probe::Handle, scopes::Child, Scope},
     progress::{timestamp::Refines, Timestamp},
@@ -132,6 +142,77 @@ where
     pub fn all_edges(&self) -> Collection<S, Edge, R> {
         self.value_edges
             .concatenate(vec![self.effect_edges.clone(), self.control_edges.clone()])
+    }
+
+    pub fn debug_assert_eq(&self, other: &ProgramGraph<S, R>)
+    where
+        S::Timestamp: Lattice + Ord,
+        R: Abelian + ExchangeData + Hashable,
+    {
+        if cfg!(debug_assertions) {
+            self.assert_eq(other);
+        }
+    }
+
+    pub fn assert_eq(&self, other: &ProgramGraph<S, R>)
+    where
+        S::Timestamp: Lattice,
+        R: Abelian + ExchangeData + Hashable,
+    {
+        self.value_edges.assert_eq(&other.value_edges);
+        self.effect_edges.assert_eq(&other.effect_edges);
+        self.control_edges.assert_eq(&other.control_edges);
+        self.nodes.assert_eq(&other.nodes);
+        self.function_nodes.assert_eq(&other.function_nodes);
+        self.functions.assert_eq(&other.functions);
+    }
+
+    pub fn arrange(&self) -> ProgramArranged<S, R>
+    where
+        S::Timestamp: Lattice,
+        R: ExchangeData,
+    {
+        ProgramArranged {
+            value_edges: self.value_edges.arrange_by_key(),
+            effect_edges: self.effect_edges.arrange_by_key(),
+            control_edges: self.control_edges.arrange_by_key(),
+            nodes: self.nodes.arrange_by_key(),
+            function_nodes: self.function_nodes.arrange_by_key(),
+            functions: self.functions.arrange_by_key(),
+        }
+    }
+
+    pub fn end_node_ids(&self) -> Collection<S, NodeId, R> {
+        self.nodes
+            .filter_map(|(id, node)| node.cast::<End>().map(|_| id))
+    }
+
+    /// Returns a collection of `(NodeId, EndNodeId)`
+    pub fn node_memberships(&self) -> Collection<S, (NodeId, NodeId), R>
+    where
+        S::Timestamp: Lattice,
+        R: Abelian + ExchangeData + Mul<Output = R> + From<i8>,
+    {
+        let edges = self.all_edges();
+        let roots = self.end_node_ids().map(|id| (id, id));
+
+        propagate::propagate(&edges, &roots)
+    }
+
+    pub fn function_ends(&self) -> Collection<S, (FuncId, NodeId), R>
+    where
+        S::Timestamp: Lattice,
+        R: ExchangeData + Mul<Output = R>,
+    {
+        self.function_nodes
+            .join(&self.nodes)
+            .filter_map(|(node_id, (func_id, node))| {
+                if node.is::<End>() {
+                    Some((func_id, node_id))
+                } else {
+                    None
+                }
+            })
     }
 }
 
@@ -314,5 +395,94 @@ where
         debug_assert_eq!(self.control_edges.time(), self.nodes.time());
         debug_assert_eq!(self.nodes.time(), self.function_nodes.time());
         debug_assert_eq!(self.function_nodes.time(), self.functions.time());
+    }
+}
+
+type TraceEdge<T, R, O = usize> = TraceAgent<OrdValSpine<NodeId, NodeId, T, R, O>>;
+type TraceNode<T, R, O = usize> = TraceAgent<OrdValSpine<NodeId, Node, T, R, O>>;
+type TraceFuncNode<T, R, O = usize> = TraceAgent<OrdValSpine<NodeId, FuncId, T, R, O>>;
+type TraceFunc<T, R, O = usize> = TraceAgent<OrdValSpine<FuncId, Function, T, R, O>>;
+
+#[derive(Clone)]
+pub struct ProgramArranged<S, R>
+where
+    S: Scope,
+    S::Timestamp: Lattice,
+    R: Semigroup + Clone,
+{
+    pub value_edges: Arranged<S, TraceEdge<S::Timestamp, R>>,
+    pub effect_edges: Arranged<S, TraceEdge<S::Timestamp, R>>,
+    pub control_edges: Arranged<S, TraceEdge<S::Timestamp, R>>,
+    pub nodes: Arranged<S, TraceNode<S::Timestamp, R>>,
+    pub function_nodes: Arranged<S, TraceFuncNode<S::Timestamp, R>>,
+    pub functions: Arranged<S, TraceFunc<S::Timestamp, R>>,
+}
+
+impl<S, R> ProgramArranged<S, R>
+where
+    S: Scope,
+    S::Timestamp: Lattice,
+    R: Semigroup + Clone,
+{
+    pub fn trace(self) -> ProgramTrace<S::Timestamp, R> {
+        ProgramTrace {
+            value_edges: self.value_edges.trace,
+            effect_edges: self.effect_edges.trace,
+            control_edges: self.control_edges.trace,
+            nodes: self.nodes.trace,
+            function_nodes: self.function_nodes.trace,
+            functions: self.functions.trace,
+        }
+    }
+
+    pub fn as_collection(&self) -> ProgramGraph<S, R> {
+        ProgramGraph {
+            value_edges: self.value_edges.as_collection(|&src, &dest| (src, dest)),
+            effect_edges: self.effect_edges.as_collection(|&src, &dest| (src, dest)),
+            control_edges: self.control_edges.as_collection(|&src, &dest| (src, dest)),
+            nodes: self
+                .nodes
+                .as_collection(|&node_id, node| (node_id, node.to_owned())),
+            function_nodes: self
+                .function_nodes
+                .as_collection(|&node_id, &func_id| (node_id, func_id)),
+            functions: self
+                .functions
+                .as_collection(|&func_id, func| (func_id, func.to_owned())),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct ProgramTrace<T, R>
+where
+    T: Timestamp + Lattice,
+    R: Semigroup + Clone,
+{
+    pub value_edges: TraceEdge<T, R>,
+    pub effect_edges: TraceEdge<T, R>,
+    pub control_edges: TraceEdge<T, R>,
+    pub nodes: TraceNode<T, R>,
+    pub function_nodes: TraceFuncNode<T, R>,
+    pub functions: TraceFunc<T, R>,
+}
+
+impl<T, R> ProgramTrace<T, R>
+where
+    T: Timestamp + Lattice,
+    R: Semigroup + Clone,
+{
+    pub fn import<S>(&mut self, scope: &mut S) -> ProgramArranged<S, R>
+    where
+        S: Scope<Timestamp = T>,
+    {
+        ProgramArranged {
+            value_edges: self.value_edges.import(scope),
+            effect_edges: self.effect_edges.import(scope),
+            control_edges: self.control_edges.import(scope),
+            nodes: self.nodes.import(scope),
+            function_nodes: self.function_nodes.import(scope),
+            functions: self.functions.import(scope),
+        }
     }
 }

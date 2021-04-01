@@ -1,5 +1,6 @@
 use crate::{
     builder::Builder,
+    dataflow::operators::Uuid,
     repr::{BasicBlockId, FuncId, InstId, VarId},
     vsdg::node::NodeId,
 };
@@ -20,11 +21,12 @@ pub struct Context {
     inst_counter: AtomicU64,
     var_counter: AtomicU64,
     node_counter: AtomicU64,
+    pub(super) ident_generation: u8,
 }
 
 // Public API
 impl Context {
-    pub fn new() -> Self {
+    pub fn new(ident_generation: u8) -> Self {
         Self {
             interner: ThreadedRodeo::new(),
             func_counter: AtomicU64::new(0),
@@ -32,6 +34,7 @@ impl Context {
             inst_counter: AtomicU64::new(0),
             var_counter: AtomicU64::new(0),
             node_counter: AtomicU64::new(0),
+            ident_generation,
         }
     }
 
@@ -63,13 +66,10 @@ impl Context {
     }
 
     crate fn node_id(&self) -> NodeId {
-        NodeId::new(fetch_id(&self.node_counter))
-    }
-}
-
-impl Default for Context {
-    fn default() -> Self {
-        Self::new()
+        NodeId::new(Uuid::new(
+            self.ident_generation,
+            fetch_id(&self.node_counter).get(),
+        ))
     }
 }
 

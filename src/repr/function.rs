@@ -155,7 +155,7 @@ impl IRDisplay for Metadata {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
 #[repr(transparent)]
-pub struct FuncId(NonZeroU64);
+pub struct FuncId(pub(crate) NonZeroU64);
 
 impl FuncId {
     pub const fn new(id: NonZeroU64) -> Self {

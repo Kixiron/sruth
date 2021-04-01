@@ -1,5 +1,5 @@
 use crate::{
-    dataflow::operators::{FilterSplit, InspectExt, Reverse, SemijoinExt, Split},
+    dataflow::operators::{FilterSplit, Reverse, SemijoinExt, Split},
     vsdg::{
         node::{Constant, End, NodeExt},
         ProgramGraph,
@@ -50,7 +50,6 @@ where
             .join_map(&nodes_grouped, |&node_id, node, &root_id| {
                 (root_id, (node_id, node.to_owned()))
             })
-            .debug()
             .arrange_by_key();
 
         // All nodes that have an identical node within the same function
@@ -66,26 +65,22 @@ where
                     }
                 },
             )
-            .distinct_core()
-            .debug();
+            .distinct_core();
 
         let to_be_eliminated_arranged = to_be_eliminated
             .map(|((node1_id, node2_id), node1)| (node2_id, (node1_id, node1)))
             .arrange_by_key();
         let to_be_rerouted = to_be_eliminated
             .map(|((_, node2_id), _)| node2_id)
-            .debug()
             .arrange_by_self();
 
-        let rerouted_edges_forward =
-            SemijoinExt::semijoin(&graph.value_edges, &to_be_rerouted).debug();
+        let rerouted_edges_forward = SemijoinExt::semijoin(&graph.value_edges, &to_be_rerouted);
         let rerouted_edges_reverse =
-            SemijoinExt::semijoin(&graph.value_edges.reverse(), &to_be_rerouted).debug();
+            SemijoinExt::semijoin(&graph.value_edges.reverse(), &to_be_rerouted);
 
         let (rerouted_edges_forward, rerouted_edges_reverse) = rerouted_edges_forward
             .map(|edge| (edge, Direction::Forward))
             .concat(&rerouted_edges_reverse.map(|(src, dest)| ((dest, src), Direction::Reverse)))
-            .debug()
             .filter_split(|((src, dest), direction)| match direction {
                 Direction::Forward => (Some((src, dest)), None),
                 Direction::Reverse => (None, Some((dest, src))),
@@ -97,7 +92,6 @@ where
                 &rerouted_edges_forward,
                 |&node2_id, &(node1_id, _), &forward| ((node1_id, forward), (node2_id, forward)),
             )
-            .debug()
             .split(identity);
 
         let (new_edges_reverse, discarded_edges_reverse) = to_be_eliminated_arranged
@@ -105,18 +99,14 @@ where
                 &rerouted_edges_reverse,
                 |&node2_id, &(node1_id, _), &reverse| ((reverse, node1_id), (reverse, node2_id)),
             )
-            .debug()
             .split(identity);
 
-        let value_edges = graph
-            .value_edges
-            .concatenate(vec![
-                new_edges_forward,
-                new_edges_reverse,
-                discarded_edges_forward.negate(),
-                discarded_edges_reverse.negate(),
-            ])
-            .debug();
+        let value_edges = graph.value_edges.concatenate(vec![
+            new_edges_forward,
+            new_edges_reverse,
+            discarded_edges_forward.negate(),
+            discarded_edges_reverse.negate(),
+        ]);
 
         ProgramGraph {
             value_edges,

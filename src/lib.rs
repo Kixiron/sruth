@@ -1,8 +1,9 @@
 #![feature(
-    crate_visibility_modifier,
-    generic_associated_types,
+    step_trait,
     iter_order_by,
-    step_trait
+    option_expect_none,
+    generic_associated_types,
+    crate_visibility_modifier
 )]
 #![allow(incomplete_features)]
 

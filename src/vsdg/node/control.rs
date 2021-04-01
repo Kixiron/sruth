@@ -27,6 +27,12 @@ impl NodeExt for Return {
     fn evaluate_with_constants(self, _constants: &[(NodeId, Constant)]) -> (Node, Vec<NodeId>) {
         (self.into(), Vec::new())
     }
+
+    // TODO: Take into account the const-ness of inputs and the possibility of
+    //       const promotion
+    fn inline_cost(&self) -> isize {
+        1
+    }
 }
 
 impl Castable<Return> for Node {
@@ -90,6 +96,12 @@ impl NodeExt for Branch {
             }
         }
     }
+
+    // TODO: Take into account the const-ness of inputs and the possibility of
+    //       const promotion
+    fn inline_cost(&self) -> isize {
+        1
+    }
 }
 
 impl Castable<Branch> for Node {
@@ -109,5 +121,22 @@ impl Castable<Branch> for Node {
 impl From<Branch> for Node {
     fn from(br: Branch) -> Self {
         Self::Control(Control::Branch(br))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
+pub struct Error {}
+
+impl NodeExt for Error {
+    fn node_name(&self) -> &'static str {
+        "Error"
+    }
+
+    fn evaluate_with_constants(self, _constants: &[(NodeId, Constant)]) -> (Node, Vec<NodeId>) {
+        (self.into(), Vec::new())
+    }
+
+    fn inline_cost(&self) -> isize {
+        0
     }
 }

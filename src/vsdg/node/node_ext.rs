@@ -40,6 +40,12 @@ pub trait NodeExt: Any {
 
     // TODO: Should probably return a result
     fn evaluate_with_constants(self, constants: &[(NodeId, Constant)]) -> (Node, Vec<NodeId>);
+
+    // TODO: Take target arch into account
+    // Resources:
+    //     - https://llvm.org/doxygen/InlineCost_8cpp_source.html
+    //     - https://llvm.org/doxygen/InlineSizeEstimatorAnalysis_8cpp_source.html
+    fn inline_cost(&self) -> isize;
 }
 
 pub trait Castable<T> {

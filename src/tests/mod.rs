@@ -359,7 +359,7 @@ pub(crate) fn run_dataflow(workers: usize, builder: Builder, context: Arc<Contex
 
 #[test]
 fn optimization_test() {
-    let context = Arc::new(Context::new());
+    let context = Arc::new(Context::new(0));
     let mut builder = context.builder();
 
     let add_uint = builder.allocate_named_function("add_uint", Type::Uint);

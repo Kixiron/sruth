@@ -17,6 +17,8 @@ pub enum Operation {
     Add(Add),
     Sub(Sub),
     Cmp(Cmp),
+    Load(Load),
+    Store(Store),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
@@ -33,15 +35,7 @@ impl NodeExt for Add {
     // TODO: Maybe start using error nodes for failures
     fn evaluate_with_constants(self, constants: &[(NodeId, Constant)]) -> (Node, Vec<NodeId>) {
         match constants {
-            [] => {
-                tracing::warn!("tried to evaluate an `Add` node with no operands");
-                (self.into(), Vec::new())
-            }
-
-            [_] => {
-                tracing::trace!("tried to evaluate an `Add` node with one operand, skipping");
-                (self.into(), Vec::new())
-            }
+            [] | [_] => (self.into(), Vec::new()),
 
             &[(left_id, ref left), (right_id, ref right)] =>
                 // FIXME: Update rhs and lhs when folding
@@ -80,25 +74,11 @@ impl NodeExt for Add {
             }
         }
     }
-}
 
-impl Castable<Add> for Node {
-    fn is(&self) -> bool {
-        matches!(self, Self::Operation(Operation::Add(_)))
-    }
-
-    unsafe fn cast_unchecked(&self) -> &Add {
-        if let Self::Operation(Operation::Add(add)) = self {
-            add
-        } else {
-            hint::unreachable_unchecked()
-        }
-    }
-}
-
-impl From<Add> for Node {
-    fn from(add: Add) -> Self {
-        Self::Operation(Operation::Add(add))
+    // TODO: Take into account the const-ness of inputs and the possibility of
+    //       const promotion
+    fn inline_cost(&self) -> isize {
+        1
     }
 }
 
@@ -116,15 +96,7 @@ impl NodeExt for Sub {
     // TODO: Maybe start using error nodes for failures
     fn evaluate_with_constants(self, constants: &[(NodeId, Constant)]) -> (Node, Vec<NodeId>) {
         match constants {
-            [] => {
-                tracing::warn!("tried to evaluate a `Sub` node with no operands");
-                (self.into(), Vec::new())
-            }
-
-            [_] => {
-                tracing::trace!("tried to evaluate a `Sub` node with one operand, skipping");
-                (self.into(), Vec::new())
-            }
+            [] | [_] => (self.into(), Vec::new()),
 
             &[(left_id, ref left), (right_id, ref right)]
                 if (left_id == self.lhs && right_id == self.rhs)
@@ -165,25 +137,11 @@ impl NodeExt for Sub {
             }
         }
     }
-}
 
-impl Castable<Sub> for Node {
-    fn is(&self) -> bool {
-        matches!(self, Self::Operation(Operation::Sub(_)))
-    }
-
-    unsafe fn cast_unchecked(&self) -> &Sub {
-        if let Self::Operation(Operation::Sub(sub)) = self {
-            sub
-        } else {
-            hint::unreachable_unchecked()
-        }
-    }
-}
-
-impl From<Sub> for Node {
-    fn from(sub: Sub) -> Self {
-        Self::Operation(Operation::Sub(sub))
+    // TODO: Take into account the const-ness of inputs and the possibility of
+    //       const promotion
+    fn inline_cost(&self) -> isize {
+        1
     }
 }
 
@@ -202,15 +160,7 @@ impl NodeExt for Cmp {
     // TODO: Maybe start using error nodes for failures
     fn evaluate_with_constants(self, constants: &[(NodeId, Constant)]) -> (Node, Vec<NodeId>) {
         match constants {
-            [] => {
-                tracing::warn!("tried to evaluate a `Cmp` node with no operands");
-                (self.into(), Vec::new())
-            }
-
-            [_] => {
-                tracing::trace!("tried to evaluate a `Cmp` node with one operand, skipping");
-                (self.into(), Vec::new())
-            }
+            [] | [_] => (self.into(), Vec::new()),
 
             &[(left_id, ref left), (right_id, ref right)]
                 if (left_id == self.lhs && right_id == self.rhs)
@@ -263,25 +213,11 @@ impl NodeExt for Cmp {
             }
         }
     }
-}
 
-impl Castable<Cmp> for Node {
-    fn is(&self) -> bool {
-        matches!(self, Self::Operation(Operation::Cmp(_)))
-    }
-
-    unsafe fn cast_unchecked(&self) -> &Cmp {
-        if let Self::Operation(Operation::Cmp(cmp)) = self {
-            cmp
-        } else {
-            hint::unreachable_unchecked()
-        }
-    }
-}
-
-impl From<Cmp> for Node {
-    fn from(cmp: Cmp) -> Self {
-        Self::Operation(Operation::Cmp(cmp))
+    // TODO: Take into account the const-ness of inputs and the possibility of
+    //       const promotion
+    fn inline_cost(&self) -> isize {
+        2
     }
 }
 
@@ -306,4 +242,76 @@ impl Display for CmpKind {
             Self::GreaterEq => f.write_str(">="),
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
+pub struct Load {}
+
+impl NodeExt for Load {
+    fn node_name(&self) -> &'static str {
+        "Load"
+    }
+
+    fn evaluate_with_constants(self, _constants: &[(NodeId, Constant)]) -> (Node, Vec<NodeId>) {
+        (self.into(), Vec::new())
+    }
+
+    // TODO: Take into account the const-ness of inputs and the possibility of
+    //       const promotion
+    fn inline_cost(&self) -> isize {
+        2
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
+pub struct Store {}
+
+impl NodeExt for Store {
+    fn node_name(&self) -> &'static str {
+        "Store"
+    }
+
+    fn evaluate_with_constants(self, _constants: &[(NodeId, Constant)]) -> (Node, Vec<NodeId>) {
+        (self.into(), Vec::new())
+    }
+
+    // TODO: Take into account the const-ness of inputs and the possibility of
+    //       const promotion
+    fn inline_cost(&self) -> isize {
+        2
+    }
+}
+
+macro_rules! util_traits {
+    ($($type:ident),* $(,)?) => {
+        $(
+            impl Castable<$type> for Node {
+                fn is(&self) -> bool {
+                    matches!(self, Self::Operation(Operation::$type(_)))
+                }
+
+                unsafe fn cast_unchecked(&self) -> &$type {
+                    if let Self::Operation(Operation::$type(value)) = self {
+                        value
+                    } else {
+                        hint::unreachable_unchecked()
+                    }
+                }
+            }
+
+            impl From<$type> for Node {
+                fn from(value: $type) -> Self {
+                    Self::Operation(Operation::$type(value))
+                }
+            }
+        )*
+    };
+}
+
+util_traits! {
+    Add,
+    Sub,
+    Cmp,
+    Load,
+    Store,
 }

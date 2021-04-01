@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 #[test]
 fn iadd_fold() {
-    let context = Arc::new(Context::new());
+    let context = Arc::new(Context::new(0));
     let mut builder = context.builder();
 
     builder
@@ -34,7 +34,7 @@ fn iadd_fold() {
 
 #[test]
 fn isub_fold() {
-    let context = Arc::new(Context::new());
+    let context = Arc::new(Context::new(0));
     let mut builder = context.builder();
 
     builder
@@ -58,7 +58,7 @@ fn isub_fold() {
 
 #[test]
 fn looping() {
-    let context = Arc::new(Context::new());
+    let context = Arc::new(Context::new(0));
     let mut builder = context.builder();
 
     builder

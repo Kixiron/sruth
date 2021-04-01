@@ -1,17 +1,13 @@
 use crate::{
-    dataflow::operators::{CrossbeamExtractor, CrossbeamPusher},
+    dataflow::operators::CrossbeamExtractor,
     vsdg::{
-        node::{Constant, FuncId, Function, Node, NodeExt, NodeId, Value},
+        logging::GraphReceiver,
+        node::{Constant, Error, FuncId, Function, Node, NodeExt, NodeId, Value},
         Edge, ProgramGraph,
     },
 };
 use abomonation_derive::Abomonation;
-use crossbeam_channel::{Receiver, Sender};
-use differential_dataflow::{
-    difference::{Monoid, Semigroup},
-    lattice::Lattice,
-    ExchangeData,
-};
+use differential_dataflow::difference::{Monoid, Semigroup};
 use petgraph::{dot::Dot, Graph};
 use std::{
     cmp::Ordering,
@@ -28,12 +24,8 @@ use timely::dataflow::{
         capture::{Event, EventPusher},
         Capture, Map,
     },
-    Scope, ScopeParent,
+    Scope,
 };
-
-type RenderSender<S, R> = Sender<
-    Event<<S as ScopeParent>::Timestamp, (String, (GraphNode, <S as ScopeParent>::Timestamp, R))>,
->;
 
 impl<S, R> ProgramGraph<S, R>
 where
@@ -41,20 +33,20 @@ where
     R: Semigroup,
 {
     // TODO: Work this out better than returning a join handle and allow naming the graph
-    pub fn render_graph<N>(&self, name: N, sender: RenderSender<S, R>) -> Self
-    where
-        N: Into<String>,
-        S::Timestamp: Lattice,
-        R: ExchangeData,
-    {
-        self.scope().region_named("debug program graph", |region| {
-            self.enter_region(region)
-                .consolidate()
-                .capture_into(name.into(), CrossbeamPusher::new(sender));
-        });
-
-        self.clone()
-    }
+    // pub fn render_graph<N>(&self, name: N, sender: RenderSender<S, R>) -> Self
+    // where
+    //     N: Into<String>,
+    //     S::Timestamp: Lattice,
+    //     R: ExchangeData,
+    // {
+    //     self.scope().region_named("debug program graph", |region| {
+    //         self.enter_region(region)
+    //             .consolidate()
+    //             .capture_into(name.into(), CrossbeamPusher::new(sender));
+    //     });
+    //
+    //     self.clone()
+    // }
 
     pub fn capture_into<P>(&self, name: String, pusher: P)
     where
@@ -75,25 +67,27 @@ where
     }
 }
 
-pub fn render_graph<T, R>(receiver: Receiver<Event<T, (String, (GraphNode, T, R))>>)
+pub fn render_graphs<T, R>(receiver: GraphReceiver<T, R>)
 where
-    T: Eq + Hash + Debug + Clone,
     R: Monoid + Step,
 {
     let mut graphs = HashMap::new();
     for event in CrossbeamExtractor::new(receiver) {
         if let Event::Messages(_, data) = event {
-            for (graph_name, node) in data {
-                graphs
-                    .entry((node.1.clone(), graph_name))
-                    .or_insert_with(|| Vec::with_capacity(512))
-                    .push(node);
+            for ((name, node), _time, diff) in data {
+                let entry = graphs
+                    .entry(name)
+                    .or_insert_with(|| Vec::with_capacity(1024));
+
+                for _ in R::zero()..diff {
+                    entry.push(node.clone());
+                }
             }
         }
     }
 
-    for ((timestamp, graph_name), mut graph_data) in graphs {
-        graph_data.sort_by(|(a, _, _), (b, _, _)| {
+    for (graph_name, mut graph_data) in graphs {
+        graph_data.sort_by(|a, b| {
             match (
                 matches!(a, GraphNode::Node(_)),
                 matches!(b, GraphNode::Node(_)),
@@ -105,38 +99,66 @@ where
         });
 
         let (mut graph, mut node_ids) = (Graph::new(), HashMap::new());
-        for (node, _time, diff) in graph_data {
-            for _ in R::zero()..diff {
-                match node {
-                    GraphNode::ValueEdge((src, dest)) => {
-                        let src = *node_ids.get(&src).unwrap();
-                        let dest = *node_ids.get(&dest).unwrap();
+        for node in graph_data {
+            match node {
+                GraphNode::ValueEdge((src, dest)) => {
+                    let src = node_ids.get(&src).copied().unwrap_or_else(|| {
+                        tracing::error!(src = ?src, dest = ?dest, "missing value edge source");
+                        graph.add_node(Node::Error(Error {}))
+                    });
 
-                        graph.add_edge(src, dest, EdgeKind::Value);
-                    }
+                    let dest = node_ids.get(&dest).copied().unwrap_or_else(|| {
+                        tracing::error!(src = ?src, dest = ?dest, "missing value edge dest");
+                        graph.add_node(Node::Error(Error {}))
+                    });
 
-                    GraphNode::EffectEdge((src, dest)) => {
-                        let src = *node_ids.get(&src).unwrap();
-                        let dest = *node_ids.get(&dest).unwrap();
-
-                        graph.add_edge(src, dest, EdgeKind::Effect);
-                    }
-
-                    GraphNode::ControlEdge((src, dest)) => {
-                        let src = *node_ids.get(&src).unwrap();
-                        let dest = *node_ids.get(&dest).unwrap();
-
-                        graph.add_edge(src, dest, EdgeKind::Control);
-                    }
-
-                    GraphNode::Node((node_id, ref node)) => {
-                        let graph_id = graph.add_node(node.clone());
-                        node_ids.insert(node_id, graph_id);
-                    }
-
-                    // TODO
-                    GraphNode::FunctionNode(_) | GraphNode::Function(_) => {}
+                    graph.add_edge(src, dest, EdgeKind::Value);
                 }
+
+                GraphNode::EffectEdge((src, dest)) => {
+                    let src = node_ids.get(&src).copied().unwrap_or_else(|| {
+                        tracing::error!(src = ?src, dest = ?dest, "missing value edge source");
+                        graph.add_node(Node::Error(Error {}))
+                    });
+
+                    let dest = node_ids.get(&dest).copied().unwrap_or_else(|| {
+                        tracing::error!(src = ?src, dest = ?dest, "missing value edge dest");
+                        graph.add_node(Node::Error(Error {}))
+                    });
+
+                    graph.add_edge(src, dest, EdgeKind::Effect);
+                }
+
+                GraphNode::ControlEdge((src, dest)) => {
+                    let src = node_ids.get(&src).copied().unwrap_or_else(|| {
+                        tracing::error!(src = ?src, dest = ?dest, "missing value edge source");
+                        graph.add_node(Node::Error(Error {}))
+                    });
+
+                    let dest = node_ids.get(&dest).copied().unwrap_or_else(|| {
+                        tracing::error!(src = ?src, dest = ?dest, "missing value edge dest");
+                        graph.add_node(Node::Error(Error {}))
+                    });
+
+                    graph.add_edge(src, dest, EdgeKind::Control);
+                }
+
+                GraphNode::Node((node_id, ref node)) => {
+                    let graph_id = graph.add_node(node.clone());
+
+                    if let Some(old_idx) = node_ids.insert(node_id, graph_id) {
+                        tracing::error!(
+                            node_id = ?node_id,
+                            node = ?node,
+                            old_idx = ?old_idx,
+                            new_idx = ?graph_id,
+                            "double inserted a graph node",
+                        );
+                    }
+                }
+
+                // TODO
+                GraphNode::FunctionNode(_) | GraphNode::Function(_) => {}
             }
         }
 
@@ -151,6 +173,7 @@ where
                     EdgeKind::Control => "color = black",
                     EdgeKind::Effect => "color = cornflowerblue",
                     EdgeKind::Value => "color = forestgreen",
+                    EdgeKind::Error => "color = red",
                 }
                 .to_owned()
             },
@@ -163,10 +186,14 @@ where
                         Constant::Bool(b) => {
                             format!("label = \"{}: bool\", shape = circle", b)
                         }
+                        Constant::Array(arr) => {
+                            format!("label = \"{:?}: array\", shape = circle", arr)
+                        }
                     },
                     Value::Parameter(param) => {
                         format!("label = \"param: {}\", shape = doublecircle", param.ty)
                     }
+                    Value::Pointer(_ptr) => "label = \"pointer\", shape = doublecircle".to_owned(),
                 },
                 Node::Control(control) => {
                     format!("label = \"{}\", shape = diamond", control.node_name())
@@ -181,13 +208,15 @@ where
                     )
                 }
                 Node::Place(_) => "shape = point".to_owned(),
+                Node::Error(error) => format!("label = \"{}\", shape = diamond", error.node_name()),
             },
         );
 
         let _ = fs::remove_dir_all(format!("target/debug/{}", graph_name));
+        let _ = fs::remove_file(format!("target/debug/{}.png", graph_name));
         fs::create_dir_all(format!("target/debug/{}", graph_name)).unwrap();
 
-        let name = format!("target/debug/{}/ts-{:?}.dot", graph_name, timestamp);
+        let name = format!("target/debug/{}/graphviz.dot", graph_name);
 
         {
             let mut file = OpenOptions::new()
@@ -203,7 +232,7 @@ where
         Command::new("dot")
             .arg(&name)
             .args(&["-Tpng", "-o"])
-            .arg(name.replace(".dot", ".png"))
+            .arg(name.replace("/graphviz.dot", ".png"))
             .status()
             .unwrap();
 
@@ -231,6 +260,7 @@ pub enum EdgeKind {
     Value,
     Effect,
     Control,
+    Error,
 }
 
 // A hack because `petgraph::Dot` requires it

@@ -12,6 +12,10 @@ impl NodeExt for Start {
     fn evaluate_with_constants(self, _constants: &[(NodeId, Constant)]) -> (Node, Vec<NodeId>) {
         (self.into(), Vec::new())
     }
+
+    fn inline_cost(&self) -> isize {
+        0
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
@@ -24,6 +28,10 @@ impl NodeExt for End {
 
     fn evaluate_with_constants(self, _constants: &[(NodeId, Constant)]) -> (Node, Vec<NodeId>) {
         (self.into(), Vec::new())
+    }
+
+    fn inline_cost(&self) -> isize {
+        0
     }
 }
 
@@ -38,6 +46,10 @@ impl NodeExt for Merge {
     fn evaluate_with_constants(self, _constants: &[(NodeId, Constant)]) -> (Node, Vec<NodeId>) {
         (self.into(), Vec::new())
     }
+
+    fn inline_cost(&self) -> isize {
+        0
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
@@ -50,5 +62,9 @@ impl NodeExt for Place {
 
     fn evaluate_with_constants(self, _constants: &[(NodeId, Constant)]) -> (Node, Vec<NodeId>) {
         (self.into(), Vec::new())
+    }
+
+    fn inline_cost(&self) -> isize {
+        0
     }
 }

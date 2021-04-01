@@ -10,8 +10,12 @@ edition = "2018"
 default = ["dot"]
 dot = ["petgraph"]
 
+[[example]]
+name = "brainfuck"
+
 [dependencies]
 fxhash = "0.2.1"
+byteorder = "1.4.3"
 derive_more = "0.99.11"
 petgraph = { version = "0.5.1", optional = true }
 abomonation = "0.7.3"
@@ -56,5 +60,4 @@ tracing-subscriber = "0.2.15"
 
 [profile.dev]
 opt-level = 0
-incremental = true
 debug = 0

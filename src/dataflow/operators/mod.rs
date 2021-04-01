@@ -4,6 +4,7 @@ mod buffered_flat_map;
 mod cleanup;
 mod collect;
 mod count_ext;
+mod discriminated_idents;
 mod distinct;
 mod event_utils;
 mod exchange;
@@ -27,6 +28,7 @@ pub use collect::{
     CollectCastable, CollectDeclarations, CollectUsages, CollectValues, CollectVariableTypes,
 };
 pub use count_ext::CountExt;
+pub use discriminated_idents::{DiscriminatedIdents, Identifier, Uuid};
 pub use distinct::DistinctExt;
 pub use event_utils::{CrossbeamExtractor, CrossbeamPusher};
 pub use exchange::ExchangeExt;

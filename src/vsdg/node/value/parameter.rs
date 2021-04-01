@@ -18,6 +18,10 @@ impl NodeExt for Parameter {
     fn evaluate_with_constants(self, _constants: &[(NodeId, Constant)]) -> (Node, Vec<NodeId>) {
         (self.into(), Vec::new())
     }
+
+    fn inline_cost(&self) -> isize {
+        0
+    }
 }
 
 impl Castable<Parameter> for Node {

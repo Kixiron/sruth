@@ -3,14 +3,15 @@ use crate::{
         block::{DeferredBasicBlock, IncompleteBasicBlock},
         BasicBlockBuilder, BuildResult, BuilderError, Context,
     },
+    dataflow::operators::Uuid,
     repr::{
         basic_block::BasicBlockDesc, function::FunctionDesc, BasicBlockId, FuncId, Ident, InstId,
         Instruction, Type, TypedVar,
     },
     vsdg::{
         node::{
-            Add as NodeAdd, Constant, End, Node, NodeId, Parameter, Return, Start, Sub as NodeSub,
-            Type as NodeType,
+            Add as NodeAdd, Constant, End, FuncId as VFuncId, Load, Node, NodeId, Operation,
+            Parameter, Pointer, Return, Start, Store, Sub as NodeSub, Type as NodeType, Value,
         },
         Edge,
     },
@@ -24,6 +25,7 @@ pub struct FunctionBuilder<'a> {
     pub(super) functions: &'a mut Vec<FunctionDesc>,
     pub(super) instructions: &'a mut Vec<(InstId, Instruction)>,
     pub(super) nodes: &'a mut Vec<(NodeId, Node)>,
+    pub(super) function_nodes: &'a mut Vec<(NodeId, VFuncId)>,
     pub(super) effect_edges: &'a mut Vec<Edge>,
     pub(super) control_edges: &'a mut Vec<Edge>,
     pub(super) value_edges: &'a mut Vec<Edge>,
@@ -123,6 +125,13 @@ impl<'a> FunctionBuilder<'a> {
         let node_id = self.context.node_id();
         let node: Node = Parameter { ty: ty.into() }.into();
         self.nodes.push((node_id, node));
+        self.function_nodes.push((
+            node_id,
+            VFuncId::new(Uuid::new(
+                self.context.ident_generation,
+                self.func_id().0.get(),
+            )),
+        ));
 
         node_id
     }
@@ -151,6 +160,14 @@ impl<'a> FunctionBuilder<'a> {
             let node: Node = Parameter { ty }.into();
 
             self.nodes.push((node_id, node));
+            self.function_nodes.push((
+                node_id,
+                VFuncId::new(Uuid::new(
+                    self.context.ident_generation,
+                    self.func_id().0.get(),
+                )),
+            ));
+
             ids.push(node_id);
         }
 
@@ -159,8 +176,8 @@ impl<'a> FunctionBuilder<'a> {
 
     pub fn vsdg_add(&mut self, lhs: NodeId, rhs: NodeId) -> BuildResult<NodeId> {
         let node_id = self.context.node_id();
-
         self.nodes.push((node_id, NodeAdd { lhs, rhs }.into()));
+
         self.value_edges.push((node_id, lhs));
         self.value_edges.push((node_id, rhs));
 
@@ -169,8 +186,8 @@ impl<'a> FunctionBuilder<'a> {
 
     pub fn vsdg_sub(&mut self, lhs: NodeId, rhs: NodeId) -> BuildResult<NodeId> {
         let node_id = self.context.node_id();
-
         self.nodes.push((node_id, NodeSub { lhs, rhs }.into()));
+
         self.value_edges.push((node_id, lhs));
         self.value_edges.push((node_id, rhs));
 
@@ -179,8 +196,8 @@ impl<'a> FunctionBuilder<'a> {
 
     pub fn vsdg_return(&mut self, value: NodeId) -> BuildResult<()> {
         let node_id = self.context.node_id();
-
         self.nodes.push((node_id, Return {}.into()));
+
         self.value_edges.push((node_id, value));
         self.control_edges.push((node_id, self.last_control));
         self.control_edges.push((self.end_node, node_id));
@@ -191,6 +208,36 @@ impl<'a> FunctionBuilder<'a> {
     pub fn vsdg_const(&mut self, value: Constant) -> NodeId {
         let node_id = self.context.node_id();
         self.nodes.push((node_id, value.into()));
+
+        node_id
+    }
+
+    pub fn vsdg_ptr_to(&mut self, value: NodeId) -> NodeId {
+        let node_id = self.context.node_id();
+        self.nodes
+            .push((node_id, Value::Pointer(Pointer {}).into()));
+
+        self.value_edges.push((node_id, value));
+
+        node_id
+    }
+
+    pub fn vsdg_load(&mut self, address: NodeId) -> NodeId {
+        let node_id = self.context.node_id();
+        self.nodes.push((node_id, Operation::Load(Load {}).into()));
+
+        self.value_edges.push((node_id, address));
+
+        node_id
+    }
+
+    pub fn vsdg_store(&mut self, address: NodeId, value: NodeId) -> NodeId {
+        let node_id = self.context.node_id();
+        self.nodes
+            .push((node_id, Operation::Store(Store {}).into()));
+
+        self.value_edges.push((node_id, address));
+        self.value_edges.push((node_id, value));
 
         node_id
     }
@@ -208,6 +255,7 @@ impl<'a> FunctionBuilder<'a> {
         functions: &'a mut Vec<FunctionDesc>,
         instructions: &'a mut Vec<(InstId, Instruction)>,
         nodes: &'a mut Vec<(NodeId, Node)>,
+        function_nodes: &'a mut Vec<(NodeId, VFuncId)>,
         value_edges: &'a mut Vec<Edge>,
         control_edges: &'a mut Vec<Edge>,
         effect_edges: &'a mut Vec<Edge>,
@@ -218,6 +266,10 @@ impl<'a> FunctionBuilder<'a> {
 
         let end_node = context.node_id();
         nodes.push((end_node, End.into()));
+        function_nodes.push((
+            end_node,
+            VFuncId::new(Uuid::new(context.ident_generation, meta.id.0.get())),
+        ));
 
         Self {
             meta,
@@ -225,6 +277,7 @@ impl<'a> FunctionBuilder<'a> {
             functions,
             instructions,
             nodes,
+            function_nodes,
             value_edges,
             control_edges,
             effect_edges,

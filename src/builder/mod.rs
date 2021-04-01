@@ -18,7 +18,7 @@ use crate::{
         BasicBlock, FuncId, Function, Ident, InstId, Instruction, InstructionExt, Type,
     },
     vsdg::{
-        node::{Node, NodeId},
+        node::{FuncId as VFuncId, Node, NodeId},
         Edge, ProgramInputs,
     },
 };
@@ -35,6 +35,7 @@ pub struct Builder {
     finished: bool,
 
     nodes: Vec<(NodeId, Node)>,
+    function_nodes: Vec<(NodeId, VFuncId)>,
     value_edges: Vec<Edge>,
     control_edges: Vec<Edge>,
     effect_edges: Vec<Edge>,
@@ -251,6 +252,12 @@ impl Builder {
             input.effect_edges.update_at(edge, time.clone(), R::from(1));
         }
 
+        for node in self.function_nodes.drain(..) {
+            input
+                .function_nodes
+                .update_at(node, time.clone(), R::from(1));
+        }
+
         Ok(())
     }
 }
@@ -266,6 +273,7 @@ impl Builder {
             finished: false,
 
             nodes: Vec::with_capacity(2048),
+            function_nodes: Vec::with_capacity(2048),
             value_edges: Vec::with_capacity(1024),
             control_edges: Vec::with_capacity(1024),
             effect_edges: Vec::with_capacity(1024),
@@ -303,6 +311,7 @@ impl Builder {
                 &mut self.functions,
                 &mut self.instructions,
                 &mut self.nodes,
+                &mut self.function_nodes,
                 &mut self.value_edges,
                 &mut self.control_edges,
                 &mut self.effect_edges,

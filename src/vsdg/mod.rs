@@ -1,28 +1,95 @@
 mod cse;
 mod dce;
-mod dot;
+pub mod dot;
 mod folding;
 mod graph;
+mod inline;
+mod logging;
 mod loops;
 pub mod node;
+mod tests;
 
-pub use graph::{Edge, ProgramGraph, ProgramInputs, ProgramVariable};
+pub use graph::{
+    Edge, ProgramArranged, ProgramGraph, ProgramInputs, ProgramTrace, ProgramVariable,
+};
+
+use crate::vsdg::logging::GraphSender;
+use differential_dataflow::{difference::Abelian, lattice::Lattice, ExchangeData};
+use std::{
+    iter::Step,
+    ops::Mul,
+    sync::{atomic::AtomicU8, Arc},
+};
+use timely::{
+    communication::Allocate,
+    dataflow::ProbeHandle,
+    order::TotalOrder,
+    progress::{timestamp::Refines, Timestamp},
+    worker::Worker,
+};
+
+pub fn optimization_dataflow<A, T, R>(
+    worker: &mut Worker<A>,
+    sender: GraphSender<T, R>,
+    ident_generation: Arc<AtomicU8>,
+) -> (ProgramInputs<T, R>, ProgramTrace<T, R>, ProbeHandle<T>)
+where
+    A: Allocate,
+    T: Timestamp + Lattice + TotalOrder + Refines<()>,
+    R: Abelian + Mul<Output = R> + From<i8> + ExchangeData + Step,
+    isize: Mul<R, Output = isize>,
+{
+    worker.dataflow::<T, _, _>(|scope| {
+        let (graph, inputs) = ProgramGraph::<_, R>::new(scope);
+        graph.render_graph("input", sender.clone());
+
+        let graph = dce::dce(scope, &graph);
+        graph.render_graph("dce over input", sender.clone());
+
+        // let graph = scope.scoped::<Product<T, Time>, _, _>("main loop", |scope| {
+        //     let variable =
+        //         ProgramVariable::new(graph.enter(scope), Product::new(Default::default(), 1));
+        //     let graph = ProgramGraph::from(&variable);
+        //
+        //     let graph = folding::constant_folding(scope, &graph);
+        //     let graph = cse::cse(scope, &graph);
+        //     let graph = dce::dce(scope, &graph);
+        //
+        //     let _loops = loops::detect_loops(scope, &graph)
+        //         .inspect(|x| tracing::trace!("looping edge: {:?}", x));
+        //
+        //     let result = graph.consolidate();
+        //     variable.set(&result);
+        //
+        //     result.leave()
+        // });
+
+        let graph = folding::constant_folding(scope, &graph, ident_generation);
+        graph.render_graph("constant folding", sender.clone());
+
+        let graph = cse::cse(scope, &graph);
+        graph.render_graph("cse", sender.clone());
+
+        let graph = dce::dce(scope, &graph);
+        graph.render_graph("dce", sender.clone());
+
+        let _trivial_inline = inline::trivial_inline(scope, &graph);
+        graph.render_graph("trivial inline", sender.clone());
+
+        let _loops = loops::detect_loops(scope, &graph)
+            .inspect(|x| tracing::trace!("looping edge: {:?}", x));
+
+        graph.render_graph("output", sender.clone());
+        (inputs, graph.arrange().trace(), graph.probe())
+    })
+}
 
 #[test]
-#[allow(clippy::many_single_char_names)]
 fn vsdg_test() {
-    use crate::{
-        builder::Context,
-        dataflow::{Diff, Time},
-    };
+    use crate::builder::{BuildResult, Builder};
     use node::{Constant, Type};
-    use std::sync::Arc;
-    use timely::{
-        dataflow::{ProbeHandle, Scope},
-        order::Product,
-        Config,
-    };
 
+    /*
     crate::tests::init_logging();
 
     let context = Arc::new(Context::new());
@@ -30,7 +97,14 @@ fn vsdg_test() {
     let (sender, receiver) = crossbeam_channel::unbounded();
     // let (inner_sender, inner_receiver) = crossbeam_channel::unbounded();
 
-    timely::execute(Config::thread(), move |worker| {
+    let mut config = Config::thread();
+
+    // TODO: Automated & fine-grained graph debugging
+    config
+        .worker
+        .set("sruth/render_debug_graphs".to_owned(), true);
+
+    timely::execute(config, move |worker| {
         if let Ok(addr) = std::env::var("DIFFERENTIAL_LOG_ADDR") {
             if !addr.is_empty() {
                 if let Ok(stream) = std::net::TcpStream::connect(&addr) {
@@ -41,47 +115,8 @@ fn vsdg_test() {
             }
         }
 
-        let probe = ProbeHandle::new();
-        let mut inputs = worker.dataflow::<Time, _, _>(|scope| {
-            let (graph, inputs) = ProgramGraph::<_, Diff>::new(scope);
-            graph.render_graph("unprocessed", sender.clone());
-
-            let graph = dce::dce(scope, &graph);
-            graph.render_graph("initial dce", sender.clone());
-
-            // let graph = scope.scoped::<Product<_, Time>, _, _>("main loop", |scope| {
-            //     let variable =
-            //         ProgramVariable::new(graph.enter(scope), Product::new(Default::default(), 1));
-            //     let graph = ProgramGraph::from(&variable);
-            //
-            //     let graph = folding::constant_folding(scope, &graph);
-            //     let graph = cse::cse(scope, &graph);
-            //     let graph = dce::dce(scope, &graph);
-            //
-            //     let _loops = loops::detect_loops(scope, &graph)
-            //         .inspect(|x| tracing::trace!("looping edge: {:?}", x));
-            //
-            //     let result = graph.consolidate();
-            //     variable.set(&result);
-            //
-            //     result.leave()
-            // });
-
-            let graph = folding::constant_folding(scope, &graph);
-            graph.render_graph("post folding", sender.clone());
-
-            let graph = cse::cse(scope, &graph);
-            graph.render_graph("post cse", sender.clone());
-
-            let graph = dce::dce(scope, &graph);
-            graph.render_graph("post dce", sender.clone());
-
-            let _loops = loops::detect_loops(scope, &graph)
-                .inspect(|x| tracing::trace!("looping edge: {:?}", x));
-
-            graph.render_graph("output", sender.clone());
-            inputs
-        });
+        let (mut inputs, _trace, probe) =
+            optimization_dataflow::<_, Time, Diff>(worker, sender.clone());
 
         if worker.index() == 0 {
             let mut builder = context.builder();
@@ -118,82 +153,8 @@ fn vsdg_test() {
                 .unwrap();
 
             builder.vsdg_finish(&mut inputs, 0).unwrap();
-
-            // let func_id = FuncId(NonZeroU64::new(1).unwrap());
-            // inputs.functions.insert((func_id, Function {}));
-            //
-            // let start = NodeId(NonZeroU64::new(1).unwrap());
-            // inputs.nodes.insert((start, Node::Start(Start)));
-            //
-            // let x = NodeId(NonZeroU64::new(2).unwrap());
-            // inputs.nodes.insert((
-            //     x,
-            //     Node::Value(Value::Parameter(Parameter { ty: Type::Uint8 })),
-            // ));
-            //
-            // let y = NodeId(NonZeroU64::new(3).unwrap());
-            // inputs
-            //     .nodes
-            //     .insert((y, Node::Value(Value::Constant(Constant::Uint8(0)))));
-            //
-            // let z = NodeId(NonZeroU64::new(4).unwrap());
-            // inputs
-            //     .nodes
-            //     .insert((z, Node::Operation(Operation::Add(Add { lhs: x, rhs: y }))));
-            // inputs.value_edges.insert((z, x));
-            // inputs.value_edges.insert((z, y));
-            //
-            // let a = NodeId(NonZeroU64::new(7).unwrap());
-            // inputs
-            //     .nodes
-            //     .insert((a, Node::Value(Value::Constant(Constant::Uint8(10)))));
-            //
-            // let b = NodeId(NonZeroU64::new(8).unwrap());
-            // inputs
-            //     .nodes
-            //     .insert((b, Node::Value(Value::Constant(Constant::Uint8(10)))));
-            //
-            // let c = NodeId(NonZeroU64::new(9).unwrap());
-            // inputs
-            //     .nodes
-            //     .insert((c, Node::Operation(Operation::Add(Add { lhs: a, rhs: b }))));
-            // inputs.value_edges.insert((c, a));
-            // inputs.value_edges.insert((c, b));
-            //
-            // let d = NodeId(NonZeroU64::new(10).unwrap());
-            // inputs
-            //     .nodes
-            //     .insert((d, Node::Operation(Operation::Add(Add { lhs: c, rhs: z }))));
-            // inputs.value_edges.insert((d, c));
-            // inputs.value_edges.insert((d, z));
-            //
-            // let ret = NodeId(NonZeroU64::new(5).unwrap());
-            // inputs
-            //     .nodes
-            //     .insert((ret, Node::Control(Control::Return(Return {}))));
-            // inputs.value_edges.insert((ret, d));
-            //
-            // let end = NodeId(NonZeroU64::new(6).unwrap());
-            // inputs.nodes.insert((end, Node::End(End)));
-            //
-            // inputs.control_edges.insert((end, ret));
-            // inputs.control_edges.insert((ret, start));
-            //
-            // let loop_head = NodeId(NonZeroU64::new(12).unwrap());
-            // inputs
-            //     .nodes
-            //     .insert((loop_head, Node::Control(Control::Branch(Branch {}))));
-            //
-            // let loop_tail = NodeId(NonZeroU64::new(13).unwrap());
-            // inputs
-            //     .nodes
-            //     .insert((loop_tail, Node::Control(Control::Branch(Branch {}))));
-            // inputs.control_edges.insert((loop_head, loop_tail));
-            // inputs.control_edges.insert((loop_tail, loop_head));
-            //
-            // inputs.control_edges.insert((end, loop_head));
-            // inputs.control_edges.insert((end, loop_tail));
         }
+
         inputs.advance_to(1);
         inputs.flush();
 
@@ -205,6 +166,51 @@ fn vsdg_test() {
     })
     .unwrap();
 
-    dot::render_graph(receiver);
-    // dot::render_graph(inner_receiver);
+    dot::render_graphs(receiver);
+    */
+
+    tests::harness::<_, fn(&mut Builder) -> BuildResult<()>, _, ()>(
+        |builder| {
+            builder.named_function("add", crate::repr::Type::Uint, |func| {
+                func.basic_block(|block| {
+                    block.ret(crate::repr::Constant::Uint(0))?;
+                    Ok(())
+                })?;
+
+                let a = func.vsdg_param(Type::Uint8);
+                let b = func.vsdg_param(Type::Uint8);
+
+                let add = func.vsdg_add(a, b)?;
+
+                let zero = func.vsdg_const(Constant::Uint8(0));
+                let add_zero = func.vsdg_add(add, zero)?;
+
+                let zero = func.vsdg_const(Constant::Uint8(0));
+                let add_zero_again = func.vsdg_add(zero, add_zero)?;
+
+                let sub = func.vsdg_sub(add_zero_again, add_zero_again)?;
+
+                // let mut last = add_zero_again;
+                // for i in 0..u8::max_value() {
+                //     let lhs = func.vsdg_const(Constant::Uint8(i));
+                //
+                //     last = func.vsdg_add(lhs, last)?;
+                // }
+
+                func.vsdg_return(sub)
+            })
+        },
+        // Some(|builder: &mut Builder| {
+        //     builder.named_function("add", crate::repr::Type::Uint, |func| {
+        //         func.basic_block(|block| {
+        //             block.ret(crate::repr::Constant::Uint(0))?;
+        //             Ok(())
+        //         })?;
+        //
+        //         let zero = func.vsdg_const(Constant::Uint8(0));
+        //         func.vsdg_return(zero)
+        //     })
+        // }),
+        None,
+    );
 }

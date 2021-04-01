@@ -1,6 +1,7 @@
 use crate::{
     dataflow::operators::{
-        FilterMap, FlatSplit, Flatten, InspectExt, Keys, Reverse, SemijoinExt, SplitBy,
+        DiscriminatedIdents, FilterMap, FlatSplit, Flatten, InspectExt, Keys, Reverse, SemijoinExt,
+        SplitBy,
     },
     vsdg::{
         node::{Add, Constant, Node, NodeExt, NodeId, Place, Sub},
@@ -13,7 +14,7 @@ use differential_dataflow::{
     operators::{
         arrange::{ArrangeByKey, ArrangeBySelf},
         consolidate::ConsolidateStream,
-        Join, JoinCore, Reduce,
+        Join, JoinCore, Reduce, Threshold,
     },
     ExchangeData,
 };
@@ -22,10 +23,18 @@ use std::{
     iter::{self, Step},
     mem,
     ops::Mul,
+    sync::{
+        atomic::{AtomicU8, Ordering},
+        Arc,
+    },
 };
 use timely::dataflow::Scope;
 
-pub fn constant_folding<S, R>(scope: &mut S, graph: &ProgramGraph<S, R>) -> ProgramGraph<S, R>
+pub fn constant_folding<S, R>(
+    scope: &mut S,
+    graph: &ProgramGraph<S, R>,
+    ident_discriminant: Arc<AtomicU8>,
+) -> ProgramGraph<S, R>
 where
     S: Scope,
     S::Timestamp: Lattice,
@@ -36,7 +45,7 @@ where
     //       in delta-stream-land) and finish up with .integrate()
     scope.region_named("constant folding", |region| {
         let graph = graph.enter_region(region);
-        let graph = algebraic_simplification(region, &graph);
+        let graph = algebraic_simplification(region, &graph, ident_discriminant);
 
         let values_to_consumers = graph
             .value_edges
@@ -84,7 +93,11 @@ where
     })
 }
 
-fn algebraic_simplification<S, R>(scope: &mut S, graph: &ProgramGraph<S, R>) -> ProgramGraph<S, R>
+fn algebraic_simplification<S, R>(
+    scope: &mut S,
+    graph: &ProgramGraph<S, R>,
+    ident_discriminant: Arc<AtomicU8>,
+) -> ProgramGraph<S, R>
 where
     S: Scope,
     S::Timestamp: Lattice,
@@ -92,7 +105,7 @@ where
 {
     scope.region_named("Algebraic simplification", |region| {
         let graph = graph.enter_region(region);
-        let graph = zero_addition(region, &graph);
+        let graph = zero_addition(region, &graph, ident_discriminant);
         let graph = self_subtract(region, &graph);
 
         graph.leave_region()
@@ -101,11 +114,15 @@ where
 
 // TODO: Generalize to chains of `Add(Add(x, 0), 0)`
 //       TODO: That may be covered by chained op fusing and be automatically picked up
-fn zero_addition<S, R>(scope: &mut S, graph: &ProgramGraph<S, R>) -> ProgramGraph<S, R>
+fn zero_addition<S, R>(
+    scope: &mut S,
+    graph: &ProgramGraph<S, R>,
+    ident_discriminant: Arc<AtomicU8>,
+) -> ProgramGraph<S, R>
 where
     S: Scope,
     S::Timestamp: Lattice,
-    R: Abelian + ExchangeData + Mul<Output = R>,
+    R: Abelian + ExchangeData + Mul<Output = R> + From<i8>,
 {
     scope.region_named("Add(x, 0) | Add(0, x) => x", |region| {
         let graph = graph.enter_region(region);
@@ -123,7 +140,7 @@ where
         });
         let non_const = graph.nodes.filter(|(_id, node)| node.isnt::<Constant>());
 
-        let (new_nodes, discarded_nodes, new_edges, discarded_edges) = addition
+        let (new_nodes, discarded_nodes, discarded_edges) = addition
             .join_core(&value_edges_forward, |&add_id, add_node, &producer_id| {
                 iter::once((producer_id, (add_id, add_node.to_owned())))
             })
@@ -133,27 +150,45 @@ where
             .join_core(
                 &value_edges_forward,
                 |&add_id, &(ref add_node, zero_edge), &producer_id| {
-                    iter::once((producer_id, ((add_id, add_node.to_owned()), zero_edge)))
+                    iter::once((
+                        producer_id,
+                        (
+                            (add_id, add_node.to_owned()),
+                            (add_id, producer_id),
+                            zero_edge,
+                        ),
+                    ))
                 },
             )
             .join_map(
                 &non_const,
-                |&value_id, &((add_id, ref add_node), zero_edge), _value| {
-                    (add_id, (add_node.to_owned(), value_id, zero_edge))
+                |_value_id, &((add_id, ref add_node), value_edge, zero_edge), _value| {
+                    (add_id, (add_node.to_owned(), value_edge, zero_edge))
                 },
             )
             .join_core(
                 &value_edges_reverse,
-                |&add_id, &(ref add_node, value_id, zero_edge), &consumer_id| {
+                |&add_id, &(ref add_node, value_edge, zero_edge), &consumer_id| {
                     iter::once((
-                        (add_id, Place.into()),
+                        (Node::from(Place), consumer_id),
                         (add_id, add_node.to_owned()),
-                        (consumer_id, value_id),
-                        vec![zero_edge, (consumer_id, add_id)],
+                        vec![value_edge, zero_edge, (consumer_id, add_id)],
                     ))
                 },
             )
             .split_by(identity);
+
+        let edge_discriminant = ident_discriminant.fetch_add(1, Ordering::Relaxed);
+        let (new_nodes, new_edges) = new_nodes
+            .map(|(node, _)| node)
+            .discriminated_idents(edge_discriminant)
+            .join(&new_nodes)
+            .split_by(|(node, (ident, consumer_id))| {
+                (
+                    (NodeId::new(ident), node),
+                    (consumer_id, NodeId::new(ident)),
+                )
+            });
 
         let discarded_edges =
             discarded_edges
@@ -161,25 +196,47 @@ where
                 .negate()
                 .debug_inspect(|((src, dest), time, diff)| {
                     tracing::trace!(
-                        "discarding value edge from Add(x, 0) | Add(0, x): ({}->{}, {:?}, {:?})",
-                        src,
-                        dest,
-                        time,
-                        diff,
+                        src = ?src,
+                        dest = ?dest,
+                        time = ?time,
+                        diff = ?diff,
+                        "discarded value edge in Add(x, 0) | Add(0, x)",
                     );
                 });
 
-        let new_edges = new_edges.debug_inspect(|((src, dest), time, diff)| {
+        new_edges.debug_inspect(|((src, dest), time, diff)| {
             tracing::trace!(
-                "adding new value edge from Add(x, 0) | Add(0, x): ({}->{}, {:?}, {:?})",
-                src,
-                dest,
-                time,
-                diff,
+                src = ?src,
+                dest = ?dest,
+                time = ?time,
+                diff = ?diff,
+                "added value edge in Add(x, 0) | Add(0, x)",
             );
         });
 
-        // TODO: Don't remove nodes, mint them
+        discarded_nodes.debug_inspect(|((id, node), time, diff)| {
+            tracing::trace!(
+                id = ?id,
+                node = ?node,
+                time = ?time,
+                diff = ?diff.clone().neg(),
+                "discarded node in Add(x, 0) | Add(0, x)",
+            );
+        });
+
+        let new_nodes = new_nodes
+            // FIXME: There's multiplicities sneaking in somewhere
+            .distinct_core::<R>()
+            .debug_inspect(|((id, node), time, diff)| {
+                tracing::trace!(
+                    id = ?id,
+                    node = ?node,
+                    time = ?time,
+                    diff = ?diff,
+                    "minted node in Add(x, 0) | Add(0, x)",
+                );
+            });
+
         let nodes = graph
             .nodes
             .concatenate(vec![new_nodes, discarded_nodes.negate()]);
@@ -220,7 +277,6 @@ where
             .join_core(&arranged_nodes, |&sub_id, &value_id, sub_node| {
                 iter::once((sub_id, (value_id, sub_node.to_owned())))
             })
-            .debug()
             .reduce(|_, values, output| {
                 let all_operands_eq = values.iter().eq_by(
                     values.iter(),

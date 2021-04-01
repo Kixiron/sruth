@@ -1,10 +1,10 @@
 use crate::{
     dataflow::{
         algorithms::reachable,
-        operators::{FilterMap, Flatten, Split},
+        operators::{Flatten, Split},
     },
     vsdg::{
-        node::{End, Node, NodeExt, NodeId, Place},
+        node::{NodeExt, NodeId, Place},
         Edge, ProgramGraph,
     },
 };
@@ -35,9 +35,7 @@ where
 
         // TODO: Is a `.distinct_core()` correct here?
         let edges = graph.all_edges();
-        let roots = graph
-            .nodes
-            .filter_map(|(id, node): (NodeId, Node)| node.cast::<End>().map(|_| id));
+        let roots = graph.end_node_ids();
 
         let retained = reachable::reachable(&edges, &roots);
 
