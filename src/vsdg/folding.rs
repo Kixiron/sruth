@@ -204,7 +204,7 @@ where
                     );
                 });
 
-        new_edges.debug_inspect(|((src, dest), time, diff)| {
+        let new_edges = new_edges.debug_inspect(|((src, dest), time, diff)| {
             tracing::trace!(
                 src = ?src,
                 dest = ?dest,

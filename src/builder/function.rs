@@ -32,6 +32,7 @@ pub struct FunctionBuilder<'a> {
     pub(super) context: &'a Context,
     pub(super) finished: bool,
     last_control: NodeId,
+    last_effect: Option<NodeId>,
     end_node: NodeId,
 }
 
@@ -228,6 +229,11 @@ impl<'a> FunctionBuilder<'a> {
 
         self.value_edges.push((node_id, address));
 
+        if let Some(last_effect) = self.last_effect {
+            self.effect_edges.push((node_id, last_effect));
+        }
+        self.last_effect = Some(node_id);
+
         node_id
     }
 
@@ -238,6 +244,11 @@ impl<'a> FunctionBuilder<'a> {
 
         self.value_edges.push((node_id, address));
         self.value_edges.push((node_id, value));
+
+        if let Some(last_effect) = self.last_effect {
+            self.effect_edges.push((node_id, last_effect));
+        }
+        self.last_effect = Some(node_id);
 
         node_id
     }
@@ -284,6 +295,7 @@ impl<'a> FunctionBuilder<'a> {
             context,
             finished: false,
             last_control,
+            last_effect: None,
             end_node,
         }
     }

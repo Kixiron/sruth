@@ -81,7 +81,9 @@ impl Sub<&Constant> for &Constant {
 
     fn sub(self, rhs: &Constant) -> Self::Output {
         match (self, rhs) {
-            (&Constant::Uint8(left), &Constant::Uint8(right)) => Constant::Uint8(left - right),
+            (&Constant::Uint8(left), &Constant::Uint8(right)) => {
+                Constant::Uint8(left.wrapping_sub(right))
+            }
             _ => panic!(),
         }
     }

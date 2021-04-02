@@ -12,17 +12,24 @@ use sruth::{
         optimization_dataflow,
     },
 };
-use std::{sync::Arc, vec::IntoIter};
+use std::{
+    sync::{
+        atomic::{AtomicU8, Ordering},
+        Arc,
+    },
+    vec::IntoIter,
+};
 use timely::Config;
 
 fn main() {
     let program = parse::stratify(&parse::parse(HELLO_WORLD));
-    let context = Arc::new(Context::new());
+    let counter = Arc::new(AtomicU8::new(0));
+    let context = Arc::new(Context::new(counter.fetch_add(1, Ordering::Relaxed)));
     let (sender, receiver) = crossbeam_channel::unbounded();
 
     timely::execute(Config::thread(), move |worker| {
         let (mut inputs, _trace, probe) =
-            optimization_dataflow::<_, Time, Diff>(worker, sender.clone());
+            optimization_dataflow::<_, Time, Diff>(worker, sender.clone(), counter.clone());
 
         if worker.index() == 0 {
             let mut builder = context.builder();
@@ -99,8 +106,11 @@ fn compile_node(
             Ok(data_ptr)
         }
 
+        // TODO: Loop regions
+        BrainfuckAst::Loop { body } => Ok(data_ptr),
+
+        // TODO: Foreign function declaration & invocation
         BrainfuckAst::Output => Ok(data_ptr),
         BrainfuckAst::Input => Ok(data_ptr),
-        BrainfuckAst::Loop { body } => Ok(data_ptr),
     }
 }
