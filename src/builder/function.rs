@@ -10,8 +10,9 @@ use crate::{
     },
     vsdg::{
         node::{
-            Add as NodeAdd, Constant, End, FuncId as VFuncId, Load, Node, NodeId, Operation,
-            Parameter, Pointer, Return, Start, Store, Sub as NodeSub, Type as NodeType, Value,
+            Add as NodeAdd, Cmp, CmpKind, Constant, End, FuncId as VFuncId, Load, LoopHead,
+            LoopTail, Node, NodeId, Operation, Parameter, Pointer, Return, Start, Store,
+            Sub as NodeSub, Type as NodeType, Value,
         },
         Edge,
     },
@@ -251,6 +252,47 @@ impl<'a> FunctionBuilder<'a> {
         self.last_effect = Some(node_id);
 
         node_id
+    }
+
+    pub fn vsdg_cmp(&mut self, kind: CmpKind, lhs: NodeId, rhs: NodeId) -> NodeId {
+        let node_id = self.context.node_id();
+        self.nodes.push((node_id, Cmp { lhs, rhs, kind }.into()));
+
+        self.value_edges.push((node_id, lhs));
+        self.value_edges.push((node_id, rhs));
+
+        node_id
+    }
+
+    pub fn vsdg_loop<F>(&mut self, body: F) -> BuildResult<NodeId>
+    where
+        F: FnOnce(&mut Self) -> BuildResult<Option<NodeId>>,
+    {
+        let loop_head = self.context.node_id();
+        self.nodes.push((loop_head, LoopHead {}.into()));
+
+        self.control_edges.push((loop_head, self.last_control));
+        self.effect_edges
+            .push((loop_head, self.last_effect.unwrap()));
+        self.last_control = loop_head;
+        self.last_effect = Some(loop_head);
+
+        let condition = body(self)?;
+
+        let loop_tail = self.context.node_id();
+        self.nodes.push((loop_head, LoopTail {}.into()));
+
+        self.control_edges.push((loop_tail, self.last_control));
+        self.effect_edges
+            .push((loop_tail, self.last_effect.unwrap()));
+        self.last_control = loop_tail;
+        self.last_effect = Some(loop_tail);
+
+        if let Some(condition) = condition {
+            self.value_edges.push((loop_tail, condition));
+        }
+
+        Ok(loop_tail)
     }
 
     pub const fn func_id(&self) -> FuncId {

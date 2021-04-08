@@ -23,12 +23,17 @@ where
     S::Timestamp: Lattice,
     D: ExchangeData + Hash,
     R: Abelian + ExchangeData,
-    Discriminant: Clone + 'static,
+    Discriminant: Display + Clone + 'static,
     Ident: Identifier<Discriminant = Discriminant> + Clone + 'static,
 {
     type Output = Collection<S, (D, Ident), R>;
 
     fn discriminated_idents(&self, discriminant: Discriminant) -> Self::Output {
+        tracing::debug!(
+            discriminant = %discriminant,
+            "initializing a discriminated idents producer",
+        );
+
         self.identifiers()
             .map(move |(data, hash)| (data, Ident::new_ident(discriminant.clone(), hash)))
     }
@@ -94,7 +99,7 @@ impl Debug for Uuid {
 
 impl Display for Uuid {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
-        Display::fmt(&self.as_u128(), fmt)
+        write!(fmt, "{:#X}00000000000000{:X}", self.discriminant, self.hash)
     }
 }
 

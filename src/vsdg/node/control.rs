@@ -8,12 +8,47 @@ use abomonation_derive::Abomonation;
 use derive_more::From;
 use sruth_derive::{Castable, NodeExt};
 
+macro_rules! node_from {
+    ($($ty:ident),* $(,)?) => {
+        $(
+            impl Castable<$ty> for Node {
+                fn is(&self) -> bool {
+                    matches!(self, Self::Control(Control::$ty(_)))
+                }
+
+                unsafe fn cast_unchecked(&self) -> &$ty {
+                    if let Self::Control(Control::$ty(val)) = self {
+                        val
+                    } else {
+                        hint::unreachable_unchecked()
+                    }
+                }
+            }
+
+            impl From<$ty> for Node {
+                fn from(val: $ty) -> Self {
+                    Self::Control(Control::$ty(val))
+                }
+            }
+        )*
+    };
+}
+
 #[derive(
     Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation, NodeExt, Castable, From,
 )]
 pub enum Control {
     Return(Return),
     Branch(Branch),
+    LoopHead(LoopHead),
+    LoopTail(LoopTail),
+}
+
+node_from! {
+    Return,
+    Branch,
+    LoopHead,
+    LoopTail,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
@@ -32,26 +67,6 @@ impl NodeExt for Return {
     //       const promotion
     fn inline_cost(&self) -> isize {
         1
-    }
-}
-
-impl Castable<Return> for Node {
-    fn is(&self) -> bool {
-        matches!(self, Self::Control(Control::Return(_)))
-    }
-
-    unsafe fn cast_unchecked(&self) -> &Return {
-        if let Self::Control(Control::Return(ret)) = self {
-            ret
-        } else {
-            hint::unreachable_unchecked()
-        }
-    }
-}
-
-impl From<Return> for Node {
-    fn from(ret: Return) -> Self {
-        Self::Control(Control::Return(ret))
     }
 }
 
@@ -104,32 +119,46 @@ impl NodeExt for Branch {
     }
 }
 
-impl Castable<Branch> for Node {
-    fn is(&self) -> bool {
-        matches!(self, Self::Control(Control::Branch(_)))
-    }
-
-    unsafe fn cast_unchecked(&self) -> &Branch {
-        if let Self::Control(Control::Branch(br)) = self {
-            br
-        } else {
-            hint::unreachable_unchecked()
-        }
-    }
-}
-
-impl From<Branch> for Node {
-    fn from(br: Branch) -> Self {
-        Self::Control(Control::Branch(br))
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
 pub struct Error {}
 
 impl NodeExt for Error {
     fn node_name(&self) -> &'static str {
         "Error"
+    }
+
+    fn evaluate_with_constants(self, _constants: &[(NodeId, Constant)]) -> (Node, Vec<NodeId>) {
+        (self.into(), Vec::new())
+    }
+
+    fn inline_cost(&self) -> isize {
+        0
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
+pub struct LoopHead {}
+
+impl NodeExt for LoopHead {
+    fn node_name(&self) -> &'static str {
+        "LoopHead"
+    }
+
+    fn evaluate_with_constants(self, _constants: &[(NodeId, Constant)]) -> (Node, Vec<NodeId>) {
+        (self.into(), Vec::new())
+    }
+
+    fn inline_cost(&self) -> isize {
+        0
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
+pub struct LoopTail {}
+
+impl NodeExt for LoopTail {
+    fn node_name(&self) -> &'static str {
+        "LoopTail"
     }
 
     fn evaluate_with_constants(self, _constants: &[(NodeId, Constant)]) -> (Node, Vec<NodeId>) {

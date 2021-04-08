@@ -8,7 +8,7 @@ use sruth::{
     dataflow::{Diff, Time},
     vsdg::{
         dot,
-        node::{Constant, NodeId},
+        node::{CmpKind, Constant, NodeId},
         optimization_dataflow,
     },
 };
@@ -20,8 +20,19 @@ use std::{
     vec::IntoIter,
 };
 use timely::Config;
+use tracing_subscriber::{
+    filter::LevelFilter,
+    fmt::{self, time::uptime},
+    prelude::__tracing_subscriber_SubscriberExt,
+    util::SubscriberInitExt,
+};
 
 fn main() {
+    let _ = tracing_subscriber::registry()
+        .with(LevelFilter::TRACE)
+        .with(fmt::layer().with_timer(uptime()))
+        .try_init();
+
     let program = parse::stratify(&parse::parse(HELLO_WORLD));
     let counter = Arc::new(AtomicU8::new(0));
     let context = Arc::new(Context::new(counter.fetch_add(1, Ordering::Relaxed)));
@@ -71,9 +82,9 @@ fn main() {
 
 fn compile_node(
     node: BrainfuckAst,
-    _program: &mut IntoIter<BrainfuckAst>,
+    program: &mut IntoIter<BrainfuckAst>,
     func: &mut FunctionBuilder,
-    data_ptr: NodeId,
+    mut data_ptr: NodeId,
 ) -> BuildResult<NodeId> {
     match node {
         BrainfuckAst::IncPtr => {
@@ -93,7 +104,7 @@ fn compile_node(
             let incremented = func.vsdg_add(value, one)?;
             func.vsdg_store(incremented, data_ptr);
 
-            Ok(data_ptr)
+            Ok(incremented)
         }
 
         BrainfuckAst::DecValue => {
@@ -103,11 +114,25 @@ fn compile_node(
             let incremented = func.vsdg_sub(value, one)?;
             func.vsdg_store(incremented, data_ptr);
 
-            Ok(data_ptr)
+            Ok(incremented)
         }
 
         // TODO: Loop regions
-        BrainfuckAst::Loop { body } => Ok(data_ptr),
+        BrainfuckAst::Loop { body } => {
+            func.vsdg_loop(|func| {
+                for node in body {
+                    data_ptr = compile_node(node, program, func, data_ptr)?;
+                }
+
+                let value = func.vsdg_load(data_ptr);
+                let zero = func.vsdg_const(Constant::Uint8(0));
+                let cmp = func.vsdg_cmp(CmpKind::Eq, value, zero);
+
+                Ok(Some(cmp))
+            })?;
+
+            Ok(data_ptr)
+        }
 
         // TODO: Foreign function declaration & invocation
         BrainfuckAst::Output => Ok(data_ptr),

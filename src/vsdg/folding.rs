@@ -179,16 +179,14 @@ where
             .split_by(identity);
 
         let edge_discriminant = ident_discriminant.fetch_add(1, Ordering::Relaxed);
-        let (new_nodes, new_edges) = new_nodes
-            .map(|(node, _)| node)
-            .discriminated_idents(edge_discriminant)
-            .join(&new_nodes)
-            .split_by(|(node, (ident, consumer_id))| {
+        let (new_nodes, new_edges) = new_nodes.discriminated_idents(edge_discriminant).split_by(
+            |((node, consumer_id), new_id)| {
                 (
-                    (NodeId::new(ident), node),
-                    (consumer_id, NodeId::new(ident)),
+                    (NodeId::new(new_id), node),
+                    (consumer_id, NodeId::new(new_id)),
                 )
-            });
+            },
+        );
 
         let discarded_edges =
             discarded_edges
