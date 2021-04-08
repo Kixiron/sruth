@@ -19,6 +19,7 @@ mod min;
 mod partition;
 mod reverse;
 mod split;
+mod union_find;
 
 pub use arrange::{ArrangeByKeyExt, ArrangeBySelfExt};
 pub use bounded_loop::BoundedLoop;
@@ -43,3 +44,4 @@ pub use min::Min;
 pub use partition::PartitionExt;
 pub use reverse::Reverse;
 pub use split::{FilterSplit, FlatSplit, Split, SplitBy};
+pub use union_find::UnionFind;

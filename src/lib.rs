@@ -9,6 +9,7 @@
 
 pub mod builder;
 pub mod dataflow;
+mod equisat;
 pub mod optimize;
 pub mod repr;
 mod tests;
