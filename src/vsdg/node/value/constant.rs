@@ -5,7 +5,7 @@ use super::{
 use abomonation_derive::Abomonation;
 use std::{
     hint,
-    ops::{Add, Sub},
+    ops::{Add, Mul, Sub},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
@@ -27,6 +27,37 @@ impl Constant {
     pub const fn is_zero(&self) -> bool {
         matches!(self, Self::Uint8(0))
     }
+
+    /// Returns `true` if the constant is [`Uint8`]
+    pub const fn is_uint8(&self) -> bool {
+        matches!(self, Self::Uint8(..))
+    }
+
+    pub const fn as_uint8(&self) -> Option<u8> {
+        if let Self::Uint8(int) = *self {
+            Some(int)
+        } else {
+            None
+        }
+    }
+
+    /// Returns `true` if the constant is [`Bool`]
+    pub const fn is_bool(&self) -> bool {
+        matches!(self, Self::Bool(..))
+    }
+
+    /// Returns `true` if the constant is [`Array`]
+    pub const fn is_array(&self) -> bool {
+        matches!(self, Self::Array(..))
+    }
+
+    pub const fn as_array(&self) -> Option<&Vec<Constant>> {
+        if let Self::Array(array) = self {
+            Some(array)
+        } else {
+            None
+        }
+    }
 }
 
 impl NodeExt for Constant {
@@ -40,6 +71,29 @@ impl NodeExt for Constant {
 
     fn inline_cost(&self) -> isize {
         0
+    }
+}
+
+impl Mul<Constant> for Constant {
+    // TODO: Should be result
+    type Output = Constant;
+
+    fn mul(self, rhs: Constant) -> Self::Output {
+        &self * &rhs
+    }
+}
+
+impl Mul<&Constant> for &Constant {
+    // TODO: Should be result
+    type Output = Constant;
+
+    fn mul(self, rhs: &Constant) -> Self::Output {
+        match (self, rhs) {
+            (&Constant::Uint8(left), &Constant::Uint8(right)) => {
+                Constant::Uint8(left.wrapping_mul(right))
+            }
+            _ => panic!(),
+        }
     }
 }
 

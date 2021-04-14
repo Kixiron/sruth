@@ -9,7 +9,7 @@ use crate::{
     },
 };
 use differential_dataflow::{
-    difference::Abelian,
+    difference::{Abelian, Multiply},
     lattice::Lattice,
     operators::{
         arrange::{ArrangeByKey, ArrangeBySelf},
@@ -22,7 +22,6 @@ use std::{
     convert::identity,
     iter::{self, Step},
     mem,
-    ops::Mul,
     sync::{
         atomic::{AtomicU8, Ordering},
         Arc,
@@ -38,7 +37,7 @@ pub fn constant_folding<S, R>(
 where
     S: Scope,
     S::Timestamp: Lattice,
-    R: Abelian + ExchangeData + Mul<Output = R> + From<i8> + Step,
+    R: Abelian + ExchangeData + Multiply<Output = R> + From<i8> + Step,
 {
     // TODO: constant_folding is gonna be a lot more efficient if you use a delta-join for the first two joins,
     //       apply the .flat_split on the delta-stream, conclude with the antijoin (the .concat is the same
@@ -101,7 +100,7 @@ fn algebraic_simplification<S, R>(
 where
     S: Scope,
     S::Timestamp: Lattice,
-    R: Abelian + ExchangeData + Mul<Output = R> + From<i8> + Step,
+    R: Abelian + ExchangeData + Multiply<Output = R> + From<i8> + Step,
 {
     scope.region_named("Algebraic simplification", |region| {
         let graph = graph.enter_region(region);
@@ -122,7 +121,7 @@ fn zero_addition<S, R>(
 where
     S: Scope,
     S::Timestamp: Lattice,
-    R: Abelian + ExchangeData + Mul<Output = R> + From<i8>,
+    R: Abelian + ExchangeData + Multiply<Output = R> + From<i8>,
 {
     scope.region_named("Add(x, 0) | Add(0, x) => x", |region| {
         let graph = graph.enter_region(region);
@@ -217,7 +216,7 @@ where
                 id = ?id,
                 node = ?node,
                 time = ?time,
-                diff = ?diff.clone().neg(),
+                diff = ?diff.clone().negate(),
                 "discarded node in Add(x, 0) | Add(0, x)",
             );
         });
@@ -256,7 +255,7 @@ fn self_subtract<S, R>(scope: &mut S, graph: &ProgramGraph<S, R>) -> ProgramGrap
 where
     S: Scope,
     S::Timestamp: Lattice,
-    R: Abelian + ExchangeData + Mul<Output = R> + From<i8> + Step,
+    R: Abelian + ExchangeData + Multiply<Output = R> + From<i8> + Step,
 {
     scope.region_named("Sub(x, x) => 0", |region| {
         let graph = graph.enter_region(region);

@@ -1,10 +1,10 @@
 use abomonation_derive::Abomonation;
-use differential_dataflow::difference::{Monoid, Semigroup};
+use differential_dataflow::difference::{Monoid, Multiply, Semigroup};
 use num_traits::Bounded;
 use std::{
     cmp,
     fmt::Debug,
-    ops::{Add, AddAssign, Mul},
+    ops::{Add, AddAssign},
 };
 
 /// A type for getting the minimum value of a stream
@@ -55,27 +55,26 @@ where
     }
 }
 
-#[allow(clippy::suspicious_arithmetic_impl)]
-impl<T> Mul<Self> for Min<T>
+impl<T> Multiply<Self> for Min<T>
 where
-    T: Add<T, Output = T>,
+    T: for<'a> Add<&'a T, Output = T>,
 {
     type Output = Self;
 
-    fn mul(self, rhs: Self) -> Self {
+    fn multiply(self, rhs: &Self) -> Self::Output {
         Self {
-            value: self.value + rhs.value,
+            value: self.value + &rhs.value,
         }
     }
 }
 
-impl<T> Mul<isize> for Min<T>
+impl<T> Multiply<isize> for Min<T>
 where
     T: Monoid + Bounded,
 {
     type Output = Self;
 
-    fn mul(self, rhs: isize) -> Self {
+    fn multiply(self, &rhs: &isize) -> Self::Output {
         if rhs < 1 {
             <Self as Monoid>::zero()
         } else {
@@ -101,5 +100,9 @@ where
 {
     fn is_zero(&self) -> bool {
         self.value == T::max_value()
+    }
+
+    fn plus_equals(&mut self, rhs: &Self) {
+        *self += rhs;
     }
 }

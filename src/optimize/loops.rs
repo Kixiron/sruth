@@ -1,18 +1,17 @@
 use crate::{dataflow::Program, repr::BasicBlockId};
 use differential_dataflow::{
-    difference::{Abelian, Semigroup},
+    difference::{Abelian, Multiply, Semigroup},
     lattice::Lattice,
     operators::{Consolidate, Iterate, Join, Threshold},
     Collection, ExchangeData,
 };
-use std::ops::Mul;
 use timely::dataflow::Scope;
 
 impl<S, R> Program<S, R>
 where
     S: Scope,
     S::Timestamp: Lattice,
-    R: Semigroup + Abelian + ExchangeData + Mul<Output = R> + From<i8>,
+    R: Semigroup + Abelian + ExchangeData + Multiply<Output = R> + From<i8>,
 {
     pub fn loops(&self) -> Collection<S, (BasicBlockId, BasicBlockId), R> {
         let graph = self.block_terminators.flat_map(|(block, term)| {

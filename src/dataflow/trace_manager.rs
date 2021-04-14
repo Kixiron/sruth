@@ -57,7 +57,7 @@ impl<T> TraceManager<T> {
         tracing::info!("advancing traces");
 
         for trace in self.traces.values_mut() {
-            trace.advance_by(frontier);
+            trace.set_logical_compaction(frontier);
         }
     }
 
@@ -65,7 +65,7 @@ impl<T> TraceManager<T> {
         tracing::info!("distinguishing traces");
 
         for trace in self.traces.values_mut() {
-            trace.distinguish_since(frontier);
+            trace.set_physical_compaction(frontier);
         }
     }
 }
@@ -77,9 +77,9 @@ impl<T> Default for TraceManager<T> {
 }
 
 pub trait ManagedTrace<T>: Any {
-    fn advance_by(&mut self, frontier: AntichainRef<'_, T>);
+    fn set_logical_compaction(&mut self, frontier: AntichainRef<'_, T>);
 
-    fn distinguish_since(&mut self, frontier: AntichainRef<'_, T>);
+    fn set_physical_compaction(&mut self, frontier: AntichainRef<'_, T>);
 
     #[inline]
     fn inner_type_id(&self) -> TypeId {
@@ -92,12 +92,12 @@ where
     Trace: TraceReader<Time = T> + Any + 'static,
 {
     #[inline]
-    fn advance_by(&mut self, frontier: AntichainRef<'_, T>) {
-        TraceReader::advance_by(self, frontier)
+    fn set_logical_compaction(&mut self, frontier: AntichainRef<'_, T>) {
+        TraceReader::set_logical_compaction(self, frontier)
     }
 
     #[inline]
-    fn distinguish_since(&mut self, frontier: AntichainRef<'_, T>) {
-        TraceReader::distinguish_since(self, frontier)
+    fn set_physical_compaction(&mut self, frontier: AntichainRef<'_, T>) {
+        TraceReader::set_physical_compaction(self, frontier)
     }
 }

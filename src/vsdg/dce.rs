@@ -9,7 +9,7 @@ use crate::{
     },
 };
 use differential_dataflow::{
-    difference::Abelian,
+    difference::{Abelian, Multiply},
     lattice::Lattice,
     operators::{
         arrange::{ArrangeByKey, ArrangeBySelf},
@@ -21,14 +21,14 @@ use dogsdogsdogs::{
     altneu::AltNeu,
     calculus::{Differentiate, Integrate},
 };
-use std::{convert::identity, mem, ops::Mul};
+use std::{convert::identity, mem};
 use timely::dataflow::Scope;
 
 pub fn dce<S, R>(scope: &mut S, graph: &ProgramGraph<S, R>) -> ProgramGraph<S, R>
 where
     S: Scope,
     S::Timestamp: Lattice,
-    R: Abelian + ExchangeData + Mul<Output = R> + From<i8>,
+    R: Abelian + ExchangeData + Multiply<Output = R> + From<i8>,
 {
     scope.region_named("dead code elimination", |scope| {
         let graph = remove_places(scope, &graph.enter_region(scope));
@@ -69,7 +69,7 @@ fn delta_cull_edges<S, R>(
 where
     S: Scope,
     S::Timestamp: Lattice,
-    R: Abelian + ExchangeData + Mul<Output = R>,
+    R: Abelian + ExchangeData + Multiply<Output = R>,
 {
     scope.scoped::<AltNeu<_>, _, _>("delta-join culling edges", |inner| {
         let neu = |time: &AltNeu<_>| {
@@ -125,7 +125,7 @@ fn remove_places<S, R>(scope: &mut S, graph: &ProgramGraph<S, R>) -> ProgramGrap
 where
     S: Scope,
     S::Timestamp: Lattice,
-    R: Abelian + ExchangeData + Mul<Output = R>,
+    R: Abelian + ExchangeData + Multiply<Output = R>,
 {
     scope.region_named("remove place values", |region| {
         let graph = graph.enter_region(region);

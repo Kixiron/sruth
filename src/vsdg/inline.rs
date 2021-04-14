@@ -1,10 +1,14 @@
-use std::{iter, ops::Mul};
-
 use crate::{
     dataflow::operators::{CountExt, InspectExt},
     vsdg::{node::NodeExt, ProgramGraph},
 };
-use differential_dataflow::{difference::Abelian, lattice::Lattice, operators::Join, ExchangeData};
+use differential_dataflow::{
+    difference::{Abelian, Multiply},
+    lattice::Lattice,
+    operators::Join,
+    ExchangeData,
+};
+use std::iter;
 use timely::dataflow::Scope;
 
 // TODO: Make this runtime configurable
@@ -15,8 +19,8 @@ pub fn trivial_inline<S, R>(scope: &mut S, graph: &ProgramGraph<S, R>) -> Progra
 where
     S: Scope,
     S::Timestamp: Lattice,
-    R: Abelian + ExchangeData + Mul<Output = R> + From<i8>,
-    isize: Mul<R, Output = isize>,
+    R: Abelian + ExchangeData + Multiply<Output = R> + From<i8>,
+    isize: Multiply<R, Output = isize>,
 {
     scope.region_named("trivial inline", |region| {
         let graph = graph.enter_region(region);

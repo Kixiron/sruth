@@ -6,7 +6,7 @@ mod value;
 
 pub use control::{Branch, Control, Error, LoopHead, LoopTail, Return};
 pub use node_ext::{Castable, NodeExt};
-pub use operation::{Add, Cmp, CmpKind, Load, Operation, Store, Sub};
+pub use operation::{Add, Cmp, CmpKind, Load, Mul, Operation, Store, Sub};
 pub use structure::{End, Merge, Place, Start};
 pub use value::{Constant, Parameter, Pointer, Type, Value};
 

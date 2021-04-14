@@ -7,12 +7,11 @@ use crate::{
 };
 use differential_dataflow::{
     algorithms::graphs::propagate,
-    difference::{Abelian, Semigroup},
+    difference::{Abelian, Multiply},
     lattice::Lattice,
     operators::{Consolidate, Iterate, Join, Reduce, Threshold},
     ExchangeData,
 };
-use std::ops::Mul;
 use timely::dataflow::Scope;
 
 pub trait Cleanup {
@@ -28,7 +27,7 @@ impl<S, R> Cleanup for Program<S, R>
 where
     S: Scope,
     S::Timestamp: Lattice,
-    R: Semigroup + Abelian + ExchangeData + Mul<Output = R> + From<i8>,
+    R: Abelian + ExchangeData + Multiply<Output = R> + From<i8>,
 {
     fn cleanup(&self) -> Self {
         // TODO: Rewrite as one single `.scoped()` using `SemigroupVariable`s that's mutually

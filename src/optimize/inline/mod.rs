@@ -9,19 +9,18 @@ use crate::{
     repr::{instruction::Call, FuncId},
 };
 use differential_dataflow::{
-    difference::{Abelian, Semigroup},
+    difference::{Abelian, Multiply, Semigroup},
     lattice::Lattice,
     operators::Join,
     Collection, ExchangeData,
 };
-use std::ops::Mul;
 use timely::dataflow::Scope;
 
 impl<S, R> Program<S, R>
 where
     S: Scope,
     S::Timestamp: Lattice,
-    R: Semigroup + Abelian + ExchangeData + Mul<Output = R>,
+    R: Semigroup + Abelian + ExchangeData + Multiply<Output = R>,
 {
     // TODO: Finish this
     pub fn inline_functions(&self, functions: &Collection<S, FuncId, R>) -> Self {

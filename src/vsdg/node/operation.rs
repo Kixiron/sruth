@@ -14,11 +14,73 @@ use std::{
     Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation, NodeExt, Castable, From,
 )]
 pub enum Operation {
+    Mul(Mul),
     Add(Add),
     Sub(Sub),
     Cmp(Cmp),
     Load(Load),
     Store(Store),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
+pub struct Mul {
+    pub lhs: NodeId,
+    pub rhs: NodeId,
+}
+
+impl NodeExt for Mul {
+    fn node_name(&self) -> &'static str {
+        "Mul"
+    }
+
+    // TODO: Maybe start using error nodes for failures
+    fn evaluate_with_constants(self, constants: &[(NodeId, Constant)]) -> (Node, Vec<NodeId>) {
+        match constants {
+            [] | [_] => (self.into(), Vec::new()),
+
+            &[(left_id, ref left), (right_id, ref right)] =>
+                // FIXME: Update rhs and lhs when folding
+                // if (left_id == self.lhs && right_id == self.rhs)
+                //     || (left_id == self.rhs && right_id == self.lhs) =>
+            {
+                let sum = left * right;
+                tracing::trace!(
+                    "evaluating a `Mul` node: {:?} + {:?} = {:?}",
+                    left,
+                    right,
+                    sum,
+                );
+
+                // Note: If something with mul is buggy, it's because it doesn't actually respect
+                //       the declared left hand and right hand side nodes. This *shouldn't* matter,
+                //       but if weird shit starts happening it's probably this
+                (sum.into(), vec![left_id, right_id])
+            }
+
+            [rest @ ..] => {
+                tracing::error!(
+                    "tried to evaluate a `Mul` node with {} operands: {:?}, expected [{:?}, {:?}]",
+                    rest.len(),
+                    rest,
+                    self.lhs,
+                    self.rhs,
+                );
+                debug_assert_eq!(
+                    rest.len(),
+                    2,
+                    "incorrect number of operands passed to a `Mul` node",
+                );
+
+                (self.into(), Vec::new())
+            }
+        }
+    }
+
+    // TODO: Take into account the const-ness of inputs and the possibility of
+    //       const promotion
+    fn inline_cost(&self) -> isize {
+        1
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
@@ -309,6 +371,7 @@ macro_rules! util_traits {
 }
 
 util_traits! {
+    Mul,
     Add,
     Sub,
     Cmp,

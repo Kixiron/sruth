@@ -4,19 +4,18 @@ use crate::{
 };
 use differential_dataflow::{
     algorithms::graphs::scc,
-    difference::Abelian,
+    difference::{Abelian, Multiply},
     lattice::Lattice,
     operators::{arrange::ArrangeByKey, Iterate, Threshold},
     Collection, ExchangeData,
 };
-use std::ops::Mul;
 use timely::dataflow::Scope;
 
 pub fn detect_loops<S, R>(scope: &mut S, graph: &ProgramGraph<S, R>) -> Collection<S, Edge, R>
 where
     S: Scope,
     S::Timestamp: Lattice,
-    R: Abelian + ExchangeData + Mul<Output = R> + From<i8>,
+    R: Abelian + ExchangeData + Multiply<Output = R> + From<i8>,
 {
     scope.region_named("detect loops", |region| {
         // Reduce the control graph to strongly connected components

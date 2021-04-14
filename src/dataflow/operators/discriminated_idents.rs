@@ -93,13 +93,13 @@ impl Identifier for Uuid {
 
 impl Debug for Uuid {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        write!(fmt, "{:#X}00000000000000{:X}", self.discriminant, self.hash)
+        write!(fmt, "{:#02X}{:08X}", self.discriminant, self.hash)
     }
 }
 
 impl Display for Uuid {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(fmt, "{:#X}00000000000000{:X}", self.discriminant, self.hash)
+        write!(fmt, "{:#02X}{:08X}", self.discriminant, self.hash)
     }
 }
 

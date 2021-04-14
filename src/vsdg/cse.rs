@@ -8,7 +8,7 @@ use crate::{
 use abomonation_derive::Abomonation;
 use differential_dataflow::{
     algorithms::graphs::propagate,
-    difference::Abelian,
+    difference::{Abelian, Multiply},
     lattice::Lattice,
     operators::{
         arrange::{ArrangeByKey, ArrangeBySelf},
@@ -16,14 +16,14 @@ use differential_dataflow::{
     },
     ExchangeData,
 };
-use std::{convert::identity, ops::Mul};
+use std::convert::identity;
 use timely::dataflow::Scope;
 
 pub fn cse<S, R>(scope: &mut S, graph: &ProgramGraph<S, R>) -> ProgramGraph<S, R>
 where
     S: Scope,
     S::Timestamp: Lattice,
-    R: Abelian + ExchangeData + Mul<Output = R> + From<i8>,
+    R: Abelian + ExchangeData + Multiply<Output = R> + From<i8>,
 {
     scope.region_named("common subexpression elimination", |region| {
         let graph = graph.enter_region(region);

@@ -47,12 +47,10 @@ default-features = false
 
 [dependencies.differential-dataflow]
 git = "https://github.com/TimelyDataflow/differential-dataflow"
-rev = "2b12f29d951b60c6c1ef3db77fbba1568db5a2c3"
 default-features = false
 
 [dependencies.dogsdogsdogs]
 git = "https://github.com/TimelyDataflow/differential-dataflow"
-rev = "2b12f29d951b60c6c1ef3db77fbba1568db5a2c3"
 default-features = false
 
 [dev-dependencies]

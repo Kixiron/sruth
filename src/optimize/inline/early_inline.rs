@@ -1,10 +1,9 @@
 use crate::{dataflow::Program, optimize::inline::InlineHeuristics, repr::FuncId};
 use differential_dataflow::{
-    difference::{Abelian, Semigroup},
+    difference::{Abelian, Multiply, Semigroup},
     lattice::Lattice,
     Collection, ExchangeData,
 };
-use std::ops::Mul;
 use timely::dataflow::Scope;
 
 pub fn early_inline<S, R>(
@@ -14,7 +13,7 @@ pub fn early_inline<S, R>(
 where
     S: Scope,
     S::Timestamp: Lattice,
-    R: Semigroup + Abelian + ExchangeData + Mul<Output = R>,
+    R: Semigroup + Abelian + ExchangeData + Multiply<Output = R>,
 {
     let trivially_inlinable = heuristics
         .filter(|(_, heuristics)| heuristics.trivially_inlinable())

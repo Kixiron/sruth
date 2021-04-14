@@ -1,5 +1,5 @@
 use differential_dataflow::{
-    difference::Abelian,
+    difference::{Abelian, Multiply},
     lattice::Lattice,
     operators::{
         arrange::ArrangeBySelf,
@@ -11,7 +11,7 @@ use differential_dataflow::{
     trace::{implementations::ord::OrdKeySpine, TraceReader},
     Collection, ExchangeData,
 };
-use std::{hash::Hash, ops::Mul};
+use std::hash::Hash;
 use timely::{dataflow::Scope, order::Product};
 
 /// Propagates the reachability of nodes forward from the roots, returning
@@ -24,7 +24,7 @@ where
     S: Scope,
     S::Timestamp: Lattice,
     N: ExchangeData + Hash,
-    R: Abelian + ExchangeData + Mul<Output = R> + From<i8>,
+    R: Abelian + ExchangeData + Multiply<Output = R> + From<i8>,
 {
     reachable_core("Reachable", &edges.arrange_by_key(), roots)
 }
@@ -42,7 +42,7 @@ where
     S: Scope,
     S::Timestamp: Lattice,
     N: ExchangeData + Hash,
-    R: Abelian + ExchangeData + Mul<Output = R> + From<i8>,
+    R: Abelian + ExchangeData + Multiply<Output = R> + From<i8>,
     Trace: TraceReader<Key = N, Val = N, Time = S::Timestamp, R = R> + Clone + 'static,
 {
     roots

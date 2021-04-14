@@ -11,13 +11,13 @@ use crate::{
 };
 use abomonation_derive::Abomonation;
 use differential_dataflow::{
-    difference::{Abelian, DiffPair, Semigroup},
+    difference::{Abelian, Multiply, Semigroup},
     lattice::Lattice,
     operators::{Consolidate, Join, Reduce, Threshold},
     Collection, ExchangeData,
 };
 use num_traits::AsPrimitive;
-use std::{iter, ops::Mul};
+use std::iter;
 use timely::dataflow::Scope;
 
 pub fn harvest_heuristics<S, R>(
@@ -26,8 +26,14 @@ pub fn harvest_heuristics<S, R>(
 where
     S: Scope,
     S::Timestamp: Lattice,
-    R: Semigroup + Abelian + ExchangeData + Mul<Output = R> + AsPrimitive<usize> + From<i8> + Clone,
-    isize: Mul<R, Output = isize>,
+    R: Semigroup
+        + Abelian
+        + ExchangeData
+        + Multiply<Output = R>
+        + AsPrimitive<usize>
+        + From<i8>
+        + Clone,
+    isize: Multiply<R, Output = isize>,
 {
     let instructions = program
         .block_instructions
@@ -138,12 +144,9 @@ where
     let mut estimated_asm = instructions
         .map(|(func, inst)| (func, inst.estimated_instructions() as isize))
         .concat(&terminator_instructions)
-        .explode(|(func, inst)| {
-            let diff = DiffPair::new(R::from(1), inst);
-            iter::once((func, diff))
-        })
+        .explode(|(func, inst)| iter::once((func, (R::from(1), inst))))
         .count_core::<R>()
-        .map(|(func, diff)| (func, diff.element2 as usize));
+        .map(|(func, diff)| (func, diff.1 as usize));
 
     estimated_asm = estimated_asm.concat(
         &terminator_instructions

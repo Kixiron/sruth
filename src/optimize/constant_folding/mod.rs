@@ -11,12 +11,11 @@ use crate::{
     },
 };
 use differential_dataflow::{
-    difference::{Monoid, Semigroup},
+    difference::{Abelian, Multiply},
     lattice::Lattice,
     operators::{consolidate::ConsolidateStream, Consolidate, Join},
     Collection, ExchangeData,
 };
-use std::ops::{Mul as OpsMul, Neg};
 use timely::dataflow::Scope;
 
 type ConstProp<S, R> = (
@@ -32,7 +31,7 @@ pub fn constant_folding<S, R>(
 where
     S: Scope,
     S::Timestamp: Lattice + Clone,
-    R: Semigroup + Monoid + ExchangeData + OpsMul<Output = R> + Neg<Output = R> + From<i8>,
+    R: Abelian + ExchangeData + Multiply<Output = R> + From<i8>,
 {
     let span = tracing::debug_span!("constant folding");
     span.in_scope(|| {
@@ -98,7 +97,7 @@ fn propagate_to_terminators<S, R>(
 where
     S: Scope,
     S::Timestamp: Lattice,
-    R: Semigroup + Monoid + ExchangeData + OpsMul<Output = R> + Neg<Output = R>,
+    R: Abelian + ExchangeData + Multiply<Output = R>,
 {
     let returns = terminators.filter_map(|(id, term)| {
         term.into_return()
@@ -181,7 +180,7 @@ fn eliminate_redundant_assigns<S, R>(
 where
     S: Scope,
     S::Timestamp: Lattice,
-    R: Semigroup + Monoid + ExchangeData + OpsMul<Output = R> + Neg<Output = R>,
+    R: Abelian + ExchangeData + Multiply<Output = R>,
 {
     let redundant_assignments = instructions
         .filter_map(|(id, inst)| {

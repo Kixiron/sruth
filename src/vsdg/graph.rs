@@ -4,7 +4,7 @@ use crate::{
 };
 use differential_dataflow::{
     algorithms::graphs::propagate,
-    difference::{Abelian, Semigroup},
+    difference::{Abelian, Multiply, Semigroup},
     input::{Input, InputSession},
     lattice::Lattice,
     operators::{
@@ -15,7 +15,6 @@ use differential_dataflow::{
     trace::implementations::ord::OrdValSpine,
     Collection, ExchangeData, Hashable,
 };
-use std::ops::Mul;
 use timely::{
     dataflow::{operators::probe::Handle, scopes::Child, Scope},
     progress::{timestamp::Refines, Timestamp},
@@ -191,7 +190,7 @@ where
     pub fn node_memberships(&self) -> Collection<S, (NodeId, NodeId), R>
     where
         S::Timestamp: Lattice,
-        R: Abelian + ExchangeData + Mul<Output = R> + From<i8>,
+        R: Abelian + ExchangeData + Multiply<Output = R> + From<i8>,
     {
         let edges = self.all_edges();
         let roots = self.end_node_ids().map(|id| (id, id));
@@ -202,7 +201,7 @@ where
     pub fn function_ends(&self) -> Collection<S, (FuncId, NodeId), R>
     where
         S::Timestamp: Lattice,
-        R: ExchangeData + Mul<Output = R>,
+        R: ExchangeData + Multiply<Output = R>,
     {
         self.function_nodes
             .join(&self.nodes)

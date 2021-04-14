@@ -15,12 +15,12 @@ use crate::{
 };
 use abomonation_derive::Abomonation;
 use differential_dataflow::{
-    difference::{Abelian, Semigroup},
+    difference::{Abelian, Multiply},
     lattice::Lattice,
     operators::{arrange::ArrangeByKey, Join, JoinCore, Threshold},
     Collection, ExchangeData,
 };
-use std::{iter, ops::Mul};
+use std::iter;
 use timely::dataflow::Scope;
 
 // TODO: Every path is terminated
@@ -41,7 +41,7 @@ pub fn verify<S, R>(
 where
     S: Scope,
     S::Timestamp: Lattice + Ord,
-    R: Semigroup + Abelian + ExchangeData + Mul<Output = R> + From<i8>,
+    R: Abelian + ExchangeData + Multiply<Output = R> + From<i8>,
 {
     let function_params = functions.flat_map(|(_, meta)| meta.params);
 
@@ -263,7 +263,7 @@ fn concat_validity_errors<S, R>(
 where
     S: Scope,
     S::Timestamp: Lattice,
-    R: Semigroup + Abelian + ExchangeData + From<i8>,
+    R: Abelian + ExchangeData + From<i8>,
 {
     scope.region_named("concat validity errors", |region| {
         undeclared_variables

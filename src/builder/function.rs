@@ -11,8 +11,8 @@ use crate::{
     vsdg::{
         node::{
             Add as NodeAdd, Cmp, CmpKind, Constant, End, FuncId as VFuncId, Load, LoopHead,
-            LoopTail, Node, NodeId, Operation, Parameter, Pointer, Return, Start, Store,
-            Sub as NodeSub, Type as NodeType, Value,
+            LoopTail, Mul as NodeMul, Node, NodeId, Operation, Parameter, Pointer, Return, Start,
+            Store, Sub as NodeSub, Type as NodeType, Value,
         },
         Edge,
     },
@@ -174,6 +174,16 @@ impl<'a> FunctionBuilder<'a> {
         }
 
         ids
+    }
+
+    pub fn vsdg_mul(&mut self, lhs: NodeId, rhs: NodeId) -> BuildResult<NodeId> {
+        let node_id = self.context.node_id();
+        self.nodes.push((node_id, NodeMul { lhs, rhs }.into()));
+
+        self.value_edges.push((node_id, lhs));
+        self.value_edges.push((node_id, rhs));
+
+        Ok(node_id)
     }
 
     pub fn vsdg_add(&mut self, lhs: NodeId, rhs: NodeId) -> BuildResult<NodeId> {

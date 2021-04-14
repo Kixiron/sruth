@@ -6,10 +6,12 @@ use crate::{
     },
 };
 use differential_dataflow::{
-    difference::Semigroup, lattice::Lattice, operators::Join, AsCollection, Collection, Data,
-    ExchangeData,
+    difference::{Multiply, Semigroup},
+    lattice::Lattice,
+    operators::Join,
+    AsCollection, Collection, Data, ExchangeData,
 };
-use std::{convert::TryInto, ops::Mul as OpsMul};
+use std::convert::TryInto;
 use timely::dataflow::{operators::Partition, Scope, Stream};
 
 // TODO: This sucks
@@ -22,7 +24,7 @@ where
     S::Timestamp: Lattice,
     T: Evaluate<Output = Instruction> + BinopExt + Data,
     Instruction: RawCast<T>,
-    R: Semigroup + ExchangeData + OpsMul<Output = R>,
+    R: Semigroup + ExchangeData + Multiply<Output = R>,
 {
     let [both_const, lhs_const, rhs_const, no_const]: [Stream<_, _>; 4] = instructions
         .filter_map(|(id, binop)| binop.cast().map(|binop| (id, binop)))

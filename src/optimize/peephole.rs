@@ -6,12 +6,11 @@ use crate::{
     },
 };
 use differential_dataflow::{
-    difference::{Abelian, Semigroup},
+    difference::{Abelian, Multiply, Semigroup},
     lattice::Lattice,
     operators::{consolidate::ConsolidateStream, Consolidate, Join},
     Collection, ExchangeData,
 };
-use std::ops::Mul as Mult;
 use timely::dataflow::Scope;
 
 pub fn peephole<S, R>(
@@ -21,7 +20,7 @@ pub fn peephole<S, R>(
 where
     S: Scope,
     S::Timestamp: Lattice,
-    R: Semigroup + Abelian + ExchangeData + Mult<Output = R>,
+    R: Semigroup + Abelian + ExchangeData + Multiply<Output = R>,
 {
     let span = tracing::debug_span!("peephole optimization");
     span.in_scope(|| {
@@ -41,7 +40,7 @@ fn apply<S, R, P>(
 where
     S: Scope,
     S::Timestamp: Lattice,
-    R: Semigroup + Abelian + ExchangeData + Mult<Output = R>,
+    R: Semigroup + Abelian + ExchangeData + Multiply<Output = R>,
     P: PeepholePass,
 {
     let span = tracing::debug_span!("peephole pass", name = P::name());

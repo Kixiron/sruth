@@ -3,12 +3,11 @@ use crate::{
     repr::{Constant, InstId, Instruction, InstructionExt, Type, Value, VarId},
 };
 use differential_dataflow::{
-    difference::{Monoid, Semigroup},
+    difference::{Abelian, Multiply},
     lattice::Lattice,
     operators::{consolidate::ConsolidateStream, Consolidate, Join, Reduce},
     Collection, ExchangeData,
 };
-use std::ops::{Mul as OpsMul, Neg};
 use timely::dataflow::Scope;
 
 /// Promote constant values to an inline position, turing operations that depend on
@@ -32,7 +31,7 @@ pub(super) fn promote_constants<S, R>(
 where
     S: Scope,
     S::Timestamp: Lattice,
-    R: Semigroup + Monoid + ExchangeData + OpsMul<Output = R> + Neg<Output = R> + From<i8>,
+    R: Abelian + ExchangeData + Multiply<Output = R> + From<i8>,
 {
     // Collect all variables that are used and the instructions that use them,
     // this allows us to ignore instructions which don't actually have any

@@ -7,17 +7,20 @@ mod inline;
 mod logging;
 mod loops;
 pub mod node;
-mod tests;
+pub mod tests;
 
 pub use graph::{
     Edge, ProgramArranged, ProgramGraph, ProgramInputs, ProgramTrace, ProgramVariable,
 };
 
-use crate::vsdg::logging::GraphSender;
-use differential_dataflow::{difference::Abelian, lattice::Lattice, ExchangeData};
+use crate::{equisat, vsdg::logging::GraphSender};
+use differential_dataflow::{
+    difference::{Abelian, Multiply},
+    lattice::Lattice,
+    ExchangeData,
+};
 use std::{
     iter::Step,
-    ops::Mul,
     sync::{atomic::AtomicU8, Arc},
 };
 use timely::{
@@ -36,8 +39,8 @@ pub fn optimization_dataflow<A, T, R>(
 where
     A: Allocate,
     T: Timestamp + Lattice + TotalOrder + Refines<()>,
-    R: Abelian + Mul<Output = R> + From<i8> + ExchangeData + Step,
-    isize: Mul<R, Output = isize>,
+    R: Abelian + Multiply<Output = R> + From<i8> + ExchangeData + Step,
+    isize: Multiply<R, Output = isize>,
 {
     worker.dataflow::<T, _, _>(|scope| {
         let (graph, inputs) = ProgramGraph::<_, R>::new(scope);
@@ -64,6 +67,9 @@ where
         //     result.leave()
         // });
 
+        let equisat = equisat::saturate(scope, &*ident_generation, &graph);
+        equisat.render_graph("equisat", sender.clone());
+
         let graph = folding::constant_folding(scope, &graph, ident_generation);
         graph.render_graph("constant folding", sender.clone());
 
@@ -73,8 +79,8 @@ where
         let graph = dce::dce(scope, &graph);
         graph.render_graph("dce", sender.clone());
 
-        let _trivial_inline = inline::trivial_inline(scope, &graph);
-        graph.render_graph("trivial inline", sender.clone());
+        let trivial_inline = inline::trivial_inline(scope, &graph);
+        trivial_inline.render_graph("trivial inline", sender.clone());
 
         let _loops = loops::detect_loops(scope, &graph)
             .inspect(|x| tracing::trace!("looping edge: {:?}", x));

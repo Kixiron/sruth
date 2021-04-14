@@ -1,88 +1,175 @@
-use crate::vsdg::node::Node;
-use differential_dataflow::{difference::Semigroup, Collection};
-use timely::dataflow::Scope;
+use crate::{
+    dataflow::{
+        operators::{DiscriminatedIdents, FlatSplit, InspectExt, Keys, Reverse, Uuid},
+        Time,
+    },
+    vsdg::{
+        node::{Add, Constant, Mul, Node, NodeExt, NodeId},
+        Edge, ProgramGraph,
+    },
+};
+use differential_dataflow::{
+    difference::{Abelian, Multiply},
+    lattice::Lattice,
+    operators::{iterate::Variable, Consolidate, Join},
+    Collection, ExchangeData,
+};
+use std::{
+    iter,
+    sync::atomic::{AtomicU8, Ordering},
+};
+use timely::{dataflow::Scope, order::Product};
 
-#[derive(Debug, PartialEq)]
-struct EClassId;
-
-struct ENode;
-
-struct EClass;
-
-struct EGraph<S, R>
+pub fn saturate<S, R>(
+    scope: &mut S,
+    ident_generator: &AtomicU8,
+    graph: &ProgramGraph<S, R>,
+) -> ProgramGraph<S, R>
 where
     S: Scope,
-    R: Semigroup,
+    S::Timestamp: Lattice,
+    R: Abelian + ExchangeData + Multiply<Output = R>,
 {
-    classes: Collection<S, (EClassId, EClass), R>,
-    worklist: Collection<S, EClassId, R>,
+    let multiply_by_two = MultiplyByTwo::new(ident_generator.fetch_add(1, Ordering::Relaxed));
+
+    let (new_nodes, new_edges) = scope.iterative::<Time, _, _>(|scope| {
+        let value_edges = Variable::new_from(
+            graph.value_edges.enter(scope),
+            Product::new(Default::default(), 1),
+        );
+        let nodes = Variable::new_from(
+            graph.nodes.enter(scope),
+            Product::new(Default::default(), 1),
+        );
+
+        let (new_nodes, new_edges) = multiply_by_two.rewrite(&graph.enter(scope));
+
+        // TODO: Choose the optimal optimization
+
+        (
+            nodes.set_concat(&new_nodes.consolidate()).leave(),
+            value_edges.set_concat(&new_edges.consolidate()).leave(),
+        )
+    });
+
+    ProgramGraph {
+        nodes: new_nodes,
+        // Note: This is blatantly wrong for debug purposes
+        value_edges: new_edges,
+        ..graph.clone()
+    }
 }
 
-impl<S, R> EGraph<S, R>
-where
-    S: Scope,
-    R: Semigroup,
-{
-    pub fn add(&mut self, enode: ENode) -> EClassId {
-        // Canonicalize the enode
+trait Rewrite {
+    fn rewrite<S, R>(
+        &self,
+        graph: &ProgramGraph<S, R>,
+    ) -> (Collection<S, (NodeId, Node), R>, Collection<S, Edge, R>)
+    where
+        S: Scope,
+        S::Timestamp: Lattice,
+        R: Abelian + ExchangeData + Multiply<Output = R>;
+}
 
-        // If the canonicalized enode already exists, return it
+#[derive(Debug)]
+struct MultiplyByTwo {
+    discriminant: u8,
+}
 
-        // Otherwise create a new eclass
-        // Add the canonicalized enode to it
-        // Make the new enode & eclass a parent of all of the enode's children
-        // Add the enode and its eclass to the hashcons
-        // Return the new eclass's id
-
-        todo!()
+impl MultiplyByTwo {
+    pub fn new(discriminant: u8) -> Self {
+        Self { discriminant }
     }
+}
 
-    pub fn merge(&mut self, left: EClassId, right: EClassId) -> EClassId {
-        // If find(left) == find(right) return find(left)
+impl Rewrite for MultiplyByTwo {
+    fn rewrite<S, R>(
+        &self,
+        graph: &ProgramGraph<S, R>,
+    ) -> (Collection<S, (NodeId, Node), R>, Collection<S, Edge, R>)
+    where
+        S: Scope,
+        S::Timestamp: Lattice,
+        R: Abelian + ExchangeData + Multiply<Output = R>,
+    {
+        let twos = graph.nodes.filter(|(_, node)| {
+            node.cast::<Constant>()
+                .and_then(|constant| constant.as_uint8())
+                .filter(|&int| int == 2)
+                .is_some()
+        });
 
-        // Otherwise union the left and right classes into a new eclass
-        // Add the new eclass's id to the worklist
-        // Return the new eclass's id
+        let mults = graph.nodes.filter(|(_, node)| node.is::<Mul>());
 
-        todo!()
+        // Edges going from an add node to a data dependency
+        let outgoing_from_mul = graph.value_edges.semijoin(&mults.keys());
+
+        // (node_id, (two_id, var_id))
+        let candidates = outgoing_from_mul
+            .reverse()
+            .semijoin(&twos.keys())
+            .reverse()
+            .join(&outgoing_from_mul)
+            .filter(|(_, (two, rhs))| two != rhs);
+
+        let (new_nodes, new_edges) = candidates
+            .map(|(mul_id, (two_id, var_id))| {
+                (
+                    mul_id,
+                    two_id,
+                    var_id,
+                    Add {
+                        lhs: var_id,
+                        rhs: var_id,
+                    }
+                    .into(),
+                )
+            })
+            .discriminated_idents(self.discriminant)
+            .flat_split(
+                |((_mul_id, _two_id, var_id, add_node), add_id): ((_, _, _, Node), Uuid)| {
+                    let add_id = NodeId::new(add_id);
+
+                    (
+                        iter::once((add_id, add_node)),
+                        // TODO: add->dependent
+                        vec![(add_id, var_id), (add_id, var_id)],
+                    )
+                },
+            );
+
+        (new_nodes, new_edges)
     }
+}
 
-    pub fn canonicalize(&mut self, enode: ENode) -> ENode {
-        // find(child) on every child of the enode
-        // Create a new enode with the newly found children
-        // Return the new enode
+#[cfg(test)]
+mod tests {
+    use crate::{
+        builder::{BuildResult, Builder},
+        vsdg::{
+            node::{Constant, Type},
+            tests,
+        },
+    };
 
-        todo!()
-    }
+    #[test]
+    fn x_times_two() {
+        tests::harness::<_, fn(&mut Builder) -> BuildResult<()>, _, ()>(
+            |builder| {
+                builder.named_function("x_times_two", crate::repr::Type::Uint, |func| {
+                    func.basic_block(|block| {
+                        block.ret(crate::repr::Constant::Uint(0))?;
+                        Ok(())
+                    })?;
 
-    pub fn find(&self, eclass: EClassId) -> EClassId {
-        // Find the root eclass id by using a union find's find() function
-        // Return the root eclass id
+                    let a = func.vsdg_param(Type::Uint8);
+                    let two = func.vsdg_const(Constant::Uint8(2));
+                    let self_mul = func.vsdg_mul(a, two)?;
 
-        todo!()
-    }
-
-    pub fn rebuild(&mut self) {
-        // Until the worklist is empty (iterative scope)
-        //     Canonicalize & deduplicate all eclasses within the worklist
-        //     Repair each (canonical & deduplicated) eclass, adding any
-        //     eclasses which now need rebuilding to the worklist
-
-        todo!()
-    }
-
-    pub fn repair(&mut self, eclass: EClassId) {
-        // For each parent enode/eclass of the current eclass
-        //     Remove them from the hashcons
-        //     Canonicalize the parent enode
-        //     Set the hashcon of the parent enode to the find of the parent eclass
-
-        // For each parent enode/eclass of the current eclass
-        //     Canonicalize the parent enode
-        //     If the canonicalized parent enode is already a parent of the current eclass
-        //         Merge the current parent and the canonicalized parent
-        //         Add (merged_parent_enode, find(eclass)) to the current enode's parents
-
-        todo!()
+                    func.vsdg_return(self_mul)
+                })
+            },
+            None,
+        );
     }
 }
