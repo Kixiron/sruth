@@ -30,8 +30,8 @@ where
     S::Timestamp: Lattice,
     R: Abelian + ExchangeData + Multiply<Output = R> + From<i8>,
 {
-    scope.region_named("dead code elimination", |scope| {
-        let graph = remove_places(scope, &graph.enter_region(scope));
+    scope.region_named("dead code elimination", |region| {
+        let graph = remove_places(region, &graph.enter_region(region));
 
         // TODO: Is a `.distinct_core()` correct here?
         let edges = graph.all_edges();
@@ -39,9 +39,9 @@ where
 
         let retained = reachable::reachable(&edges, &roots);
 
-        let value_edges = delta_cull_edges(scope, &graph.value_edges, &retained);
-        let effect_edges = delta_cull_edges(scope, &graph.effect_edges, &retained);
-        let control_edges = delta_cull_edges(scope, &graph.control_edges, &retained);
+        let value_edges = delta_cull_edges(region, &graph.value_edges, &retained);
+        let effect_edges = delta_cull_edges(region, &graph.effect_edges, &retained);
+        let control_edges = delta_cull_edges(region, &graph.control_edges, &retained);
         let nodes = graph.nodes.semijoin(&retained);
 
         ProgramGraph {

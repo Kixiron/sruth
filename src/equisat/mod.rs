@@ -1,175 +1,340 @@
-use crate::{
-    dataflow::{
-        operators::{DiscriminatedIdents, FlatSplit, InspectExt, Keys, Reverse, Uuid},
-        Time,
-    },
-    vsdg::{
-        node::{Add, Constant, Mul, Node, NodeExt, NodeId},
-        Edge, ProgramGraph,
-    },
+use crate::dataflow::{
+    operators::{FilterSplit, InspectExt, Reverse},
+    Time,
 };
+use abomonation_derive::Abomonation;
 use differential_dataflow::{
-    difference::{Abelian, Multiply},
+    algorithms::graphs::propagate,
+    difference::{Abelian, Multiply, Semigroup},
     lattice::Lattice,
-    operators::{iterate::Variable, Consolidate, Join},
+    operators::{
+        arrange::ArrangeByKey, iterate::SemigroupVariable, Join, JoinCore, Reduce, Threshold,
+    },
     Collection, ExchangeData,
 };
-use std::{
-    iter,
-    sync::atomic::{AtomicU8, Ordering},
+use std::iter;
+use timely::{
+    dataflow::{operators::probe::Handle, scopes::Child, Scope},
+    order::Product,
+    progress::timestamp::Refines,
 };
-use timely::{dataflow::Scope, order::Product};
 
-pub fn saturate<S, R>(
-    scope: &mut S,
-    ident_generator: &AtomicU8,
-    graph: &ProgramGraph<S, R>,
-) -> ProgramGraph<S, R>
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
+pub struct EClassId(u64);
+
+impl EClassId {
+    pub const fn new(id: u64) -> Self {
+        Self(id)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
+pub struct ENodeId(u64);
+
+impl ENodeId {
+    pub const fn new(id: u64) -> Self {
+        Self(id)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
+pub enum ENode {
+    Add(Add),
+    Constant,
+}
+
+impl ENode {
+    pub const fn as_add(self) -> Option<Add> {
+        if let Self::Add(add) = self {
+            Some(add)
+        } else {
+            None
+        }
+    }
+}
+
+impl ENode {
+    /// Returns `true` if the e_node is [`Add`].
+    pub const fn is_add(&self) -> bool {
+        matches!(self, Self::Add(..))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
+pub struct Add {
+    lhs: EClassId,
+    rhs: EClassId,
+}
+
+impl Add {
+    pub const fn new(lhs: EClassId, rhs: EClassId) -> Self {
+        Self { lhs, rhs }
+    }
+
+    /// Get the [`Add`]'s left hand side
+    pub const fn lhs(&self) -> EClassId {
+        self.lhs
+    }
+
+    /// Get the [`Add`]'s right hand side
+    pub const fn rhs(&self) -> EClassId {
+        self.rhs
+    }
+}
+
+#[derive(Clone)]
+pub struct EGraph<S, R>
 where
     S: Scope,
     S::Timestamp: Lattice,
-    R: Abelian + ExchangeData + Multiply<Output = R>,
+    R: Semigroup,
 {
-    let multiply_by_two = MultiplyByTwo::new(ident_generator.fetch_add(1, Ordering::Relaxed));
+    /// Collection of enodes and their ids
+    enodes: Collection<S, (ENodeId, ENode), R>,
+    /// Collection of eclass ids to their child nodes
+    eclass_nodes: Collection<S, (EClassId, ENodeId), R>,
+    /// Collection of eclass ids to their parent eclasses
+    eclass_parents: Collection<S, (EClassId, EClassId), R>,
+    canon_enode_ids: Collection<S, ENodeId, R>,
+}
 
-    let (new_nodes, new_edges) = scope.iterative::<Time, _, _>(|scope| {
-        let value_edges = Variable::new_from(
-            graph.value_edges.enter(scope),
-            Product::new(Default::default(), 1),
-        );
-        let nodes = Variable::new_from(
-            graph.nodes.enter(scope),
-            Product::new(Default::default(), 1),
-        );
-
-        let (new_nodes, new_edges) = multiply_by_two.rewrite(&graph.enter(scope));
-
-        // TODO: Choose the optimal optimization
-
-        (
-            nodes.set_concat(&new_nodes.consolidate()).leave(),
-            value_edges.set_concat(&new_edges.consolidate()).leave(),
-        )
-    });
-
-    ProgramGraph {
-        nodes: new_nodes,
-        // Note: This is blatantly wrong for debug purposes
-        value_edges: new_edges,
-        ..graph.clone()
+impl<S, R> EGraph<S, R>
+where
+    S: Scope,
+    S::Timestamp: Lattice,
+    R: Abelian + ExchangeData + Multiply<Output = R> + From<i8>,
+{
+    pub fn new(
+        enodes: Collection<S, (ENodeId, ENode), R>,
+        eclass_nodes: Collection<S, (EClassId, ENodeId), R>,
+        eclass_parents: Collection<S, (EClassId, EClassId), R>,
+        canon_enode_ids: Collection<S, ENodeId, R>,
+    ) -> Self {
+        Self {
+            enodes,
+            eclass_nodes,
+            eclass_parents,
+            canon_enode_ids,
+        }
     }
-}
 
-trait Rewrite {
-    fn rewrite<S, R>(
-        &self,
-        graph: &ProgramGraph<S, R>,
-    ) -> (Collection<S, (NodeId, Node), R>, Collection<S, Edge, R>)
-    where
-        S: Scope,
-        S::Timestamp: Lattice,
-        R: Abelian + ExchangeData + Multiply<Output = R>;
-}
-
-#[derive(Debug)]
-struct MultiplyByTwo {
-    discriminant: u8,
-}
-
-impl MultiplyByTwo {
-    pub fn new(discriminant: u8) -> Self {
-        Self { discriminant }
+    pub fn scope(&self) -> S {
+        self.enodes.scope()
     }
-}
 
-impl Rewrite for MultiplyByTwo {
-    fn rewrite<S, R>(
-        &self,
-        graph: &ProgramGraph<S, R>,
-    ) -> (Collection<S, (NodeId, Node), R>, Collection<S, Edge, R>)
+    pub fn probe_with(&self, probe: &mut Handle<S::Timestamp>) -> Self {
+        Self {
+            enodes: self.enodes.probe_with(probe),
+            eclass_nodes: self.eclass_nodes.probe_with(probe),
+            eclass_parents: self.eclass_parents.probe_with(probe),
+            canon_enode_ids: self.canon_enode_ids.probe_with(probe),
+        }
+    }
+
+    pub fn enter<'a, T>(&self, scope: &mut Child<'a, S, T>) -> EGraph<Child<'a, S, T>, R>
     where
-        S: Scope,
-        S::Timestamp: Lattice,
-        R: Abelian + ExchangeData + Multiply<Output = R>,
+        T: Refines<S::Timestamp> + Lattice,
     {
-        let twos = graph.nodes.filter(|(_, node)| {
-            node.cast::<Constant>()
-                .and_then(|constant| constant.as_uint8())
-                .filter(|&int| int == 2)
-                .is_some()
+        EGraph {
+            enodes: self.enodes.enter(scope),
+            eclass_nodes: self.eclass_nodes.enter(scope),
+            eclass_parents: self.eclass_parents.enter(scope),
+            canon_enode_ids: self.canon_enode_ids.enter(scope),
+        }
+    }
+
+    #[track_caller]
+    pub fn debug(&self) -> Self {
+        Self {
+            enodes: self.enodes.debug(),
+            eclass_nodes: self.eclass_nodes.debug(),
+            eclass_parents: self.eclass_parents.debug(),
+            canon_enode_ids: self.canon_enode_ids.debug(),
+        }
+    }
+
+    pub fn run(&self) -> Self {
+        let rewrites = self.scope().iterative(|scope| {
+            let edges = SemigroupVariable::new(scope, Product::new(Default::default(), 1));
+
+            edges.set(new_edges).leave()
         });
 
-        let mults = graph.nodes.filter(|(_, node)| node.is::<Mul>());
-
-        // Edges going from an add node to a data dependency
-        let outgoing_from_mul = graph.value_edges.semijoin(&mults.keys());
-
-        // (node_id, (two_id, var_id))
-        let candidates = outgoing_from_mul
-            .reverse()
-            .semijoin(&twos.keys())
-            .reverse()
-            .join(&outgoing_from_mul)
-            .filter(|(_, (two, rhs))| two != rhs);
-
-        let (new_nodes, new_edges) = candidates
-            .map(|(mul_id, (two_id, var_id))| {
-                (
-                    mul_id,
-                    two_id,
-                    var_id,
-                    Add {
-                        lhs: var_id,
-                        rhs: var_id,
-                    }
-                    .into(),
-                )
-            })
-            .discriminated_idents(self.discriminant)
-            .flat_split(
-                |((_mul_id, _two_id, var_id, add_node), add_id): ((_, _, _, Node), Uuid)| {
-                    let add_id = NodeId::new(add_id);
-
-                    (
-                        iter::once((add_id, add_node)),
-                        // TODO: add->dependent
-                        vec![(add_id, var_id), (add_id, var_id)],
-                    )
-                },
-            );
-
-        (new_nodes, new_edges)
+        self.union().leave()
     }
+
+    pub fn union(&self) -> Self {
+        let (canon_enode_ids, eclass_parents) = self.scope().iterative::<Time, _, _>(|scope| {
+            let product = Product::new(Default::default(), 1);
+            let enodes = self.enodes.enter(scope);
+            let eclass_parents = SemigroupVariable::new(scope, product);
+
+            let union_find = derive_canonical_eclass_ids(
+                &eclass_parents
+                    .concat(&self.eclass_parents.enter(scope))
+                    // This distinct could be unnecessary, but it's here to make sure that the
+                    // multiplicities from the variable don't overflow within the `propagate_core()`
+                    // call inside of canon id derivation
+                    .distinct_core(),
+                &enodes,
+            );
+            let eclass_union_find = union_find
+                .map(|(enode, eclass)| (EClassId(enode.0), eclass))
+                .arrange_by_key();
+
+            let (add_lhs, add_rhs) = enodes.filter_split(|(enode_id, enode)| {
+                if let Some(add) = enode.as_add() {
+                    (Some((add.lhs(), enode_id)), Some((add.rhs(), enode_id)))
+                } else {
+                    (None, None)
+                }
+            });
+
+            let canon_lhs = add_lhs.join_core(&eclass_union_find, |_, &parent_enode, &eclass| {
+                iter::once((parent_enode, eclass))
+            });
+            let canon_rhs = add_rhs.join_core(&eclass_union_find, |_, &parent_enode, &eclass| {
+                iter::once((parent_enode, eclass))
+            });
+
+            let canon_enodes = canon_lhs
+                .join_map(&canon_rhs, |&enode, &lhs, &rhs| {
+                    (enode, ENode::Add(Add::new(lhs, rhs)))
+                })
+                .reverse()
+                .arrange_by_key();
+
+            let canon_edges = canon_enodes.reduce(|_enode, enodes, edges| {
+                let (&first_enode, _) = enodes[0].clone();
+
+                edges.reserve(enodes.len() - 1);
+                edges.extend(
+                    enodes
+                        .iter()
+                        .skip(1)
+                        .map(|&(&enode, _)| ((first_enode, enode), R::from(1))),
+                );
+            });
+
+            let canon_enode_ids = canon_edges
+                .map(|(_, (canonical_enode_id, _))| canonical_enode_id)
+                .leave()
+                .distinct_core::<R>();
+
+            let canon_enode_edges =
+                canon_edges.map(|(_enode, (src, dest))| (EClassId(src.0), EClassId(dest.0)));
+            let canon_enode_edges = canon_enode_edges.concat(&canon_enode_edges.reverse());
+
+            (
+                canon_enode_ids,
+                eclass_parents.set(&canon_enode_edges).leave(),
+            )
+        });
+
+        Self {
+            eclass_parents,
+            canon_enode_ids,
+            ..self.clone()
+        }
+    }
+
+    fn derive_canonical_eclass_ids(&self) -> Collection<S, (ENodeId, EClassId), R> {
+        derive_canonical_eclass_ids(&self.eclass_parents, &self.enodes)
+    }
+}
+
+fn derive_canonical_eclass_ids<S, R>(
+    eclass_parents: &Collection<S, (EClassId, EClassId), R>,
+    enodes: &Collection<S, (ENodeId, ENode), R>,
+) -> Collection<S, (ENodeId, EClassId), R>
+where
+    S: Scope,
+    S::Timestamp: Lattice,
+    R: Abelian + ExchangeData + Multiply<Output = R> + From<i8>,
+{
+    let canonicalized_edges = eclass_parents.flat_map(|(src, dest)| {
+        vec![
+            (ENodeId(src.0), ENodeId(dest.0)),
+            (ENodeId(dest.0), ENodeId(src.0)),
+        ]
+    });
+
+    let implicit_eclass_assignment = enodes
+        .map(|(enode, _)| (enode, EClassId(enode.0)))
+        .distinct_core();
+
+    propagate::propagate_at(
+        &canonicalized_edges,
+        &implicit_eclass_assignment,
+        |&eclass| eclass.0,
+    )
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        builder::{BuildResult, Builder},
-        vsdg::{
-            node::{Constant, Type},
-            tests,
-        },
-    };
+    use crate::equisat::{Add, EClassId, EGraph, ENode, ENodeId};
+    use differential_dataflow::{input::Input, lattice::Lattice};
+    use timely::dataflow::operators::probe::Handle;
 
     #[test]
-    fn x_times_two() {
-        tests::harness::<_, fn(&mut Builder) -> BuildResult<()>, _, ()>(
-            |builder| {
-                builder.named_function("x_times_two", crate::repr::Type::Uint, |func| {
-                    func.basic_block(|block| {
-                        block.ret(crate::repr::Constant::Uint(0))?;
-                        Ok(())
-                    })?;
+    fn union_find() {
+        timely::execute_directly(|worker| {
+            let mut probe = Handle::new();
 
-                    let a = func.vsdg_param(Type::Uint8);
-                    let two = func.vsdg_const(Constant::Uint8(2));
-                    let self_mul = func.vsdg_mul(a, two)?;
+            let (mut enodes, mut eclass_nodes, mut eclass_parents, mut canon_enode_ids) =
+                worker.dataflow::<usize, _, _>(|scope| {
+                    let (enode_input, enodes) = scope.new_collection();
+                    let (eclass_nodes_input, eclass_nodes) = scope.new_collection();
+                    let (eclass_parents_input, eclass_parents) = scope.new_collection();
+                    let (canon_enode_ids_input, canon_enode_ids) = scope.new_collection();
 
-                    func.vsdg_return(self_mul)
-                })
-            },
-            None,
-        );
+                    let graph = EGraph::new(enodes, eclass_nodes, eclass_parents, canon_enode_ids);
+                    graph.debug().union().debug().probe_with(&mut probe);
+
+                    (
+                        enode_input,
+                        eclass_nodes_input,
+                        eclass_parents_input,
+                        canon_enode_ids_input,
+                    )
+                });
+
+            enodes.insert((
+                ENodeId::new(0),
+                ENode::Add(Add::new(EClassId::new(3), EClassId::new(4))),
+            ));
+            enodes.insert((
+                ENodeId::new(1),
+                ENode::Add(Add::new(EClassId::new(3), EClassId::new(4))),
+            ));
+            enodes.insert((
+                ENodeId::new(2),
+                ENode::Add(Add::new(EClassId::new(3), EClassId::new(4))),
+            ));
+            eclass_nodes.insert((EClassId::new(0), ENodeId::new(0)));
+            eclass_nodes.insert((EClassId::new(0), ENodeId::new(1)));
+            eclass_nodes.insert((EClassId::new(0), ENodeId::new(2)));
+            eclass_parents.insert((EClassId::new(0), EClassId::new(3)));
+            eclass_parents.insert((EClassId::new(0), EClassId::new(4)));
+
+            enodes.advance_to(1);
+            eclass_nodes.advance_to(1);
+            eclass_parents.advance_to(1);
+            canon_enode_ids.advance_to(1);
+            enodes.flush();
+            eclass_nodes.flush();
+            eclass_parents.flush();
+            canon_enode_ids.flush();
+
+            worker.step_while(|| {
+                probe.less_than(
+                    &enodes
+                        .time()
+                        .join(eclass_nodes.time())
+                        .join(eclass_parents.time())
+                        .join(canon_enode_ids.time()),
+                )
+            });
+        });
     }
 }

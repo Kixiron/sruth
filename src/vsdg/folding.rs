@@ -14,9 +14,10 @@ use differential_dataflow::{
     operators::{
         arrange::{ArrangeByKey, ArrangeBySelf},
         consolidate::ConsolidateStream,
+        iterate::SemigroupVariable,
         Join, JoinCore, Reduce, Threshold,
     },
-    ExchangeData,
+    AsCollection, ExchangeData,
 };
 use std::{
     convert::identity,
@@ -27,7 +28,14 @@ use std::{
         Arc,
     },
 };
-use timely::dataflow::Scope;
+use timely::{
+    dataflow::{
+        operators::{Delay, Map},
+        Scope,
+    },
+    order::Product,
+    progress::PathSummary,
+};
 
 pub fn constant_folding<S, R>(
     scope: &mut S,

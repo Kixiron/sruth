@@ -1,3 +1,4 @@
+mod apply_seq;
 mod arrange;
 mod bounded_loop;
 mod buffered_flat_map;
@@ -19,8 +20,10 @@ mod min;
 mod partition;
 mod reverse;
 mod split;
+mod threshold;
 mod union_find;
 
+pub use apply_seq::ApplySequenced;
 pub use arrange::{ArrangeByKeyExt, ArrangeBySelfExt};
 pub use bounded_loop::BoundedLoop;
 pub use buffered_flat_map::BufferedFlatMap;
@@ -44,4 +47,5 @@ pub use min::Min;
 pub use partition::PartitionExt;
 pub use reverse::Reverse;
 pub use split::{FilterSplit, FlatSplit, Split, SplitBy};
+pub use threshold::ThresholdExt;
 pub use union_find::UnionFind;

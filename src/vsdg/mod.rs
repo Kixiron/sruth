@@ -14,18 +14,30 @@ pub use graph::{
 };
 
 use crate::{equisat, vsdg::logging::GraphSender};
+use abomonation_derive::Abomonation;
 use differential_dataflow::{
     difference::{Abelian, Multiply},
     lattice::Lattice,
     ExchangeData,
 };
 use std::{
+    collections::HashMap,
     iter::Step,
+    rc::Rc,
     sync::{atomic::AtomicU8, Arc},
+    time::Duration,
 };
 use timely::{
     communication::Allocate,
-    dataflow::ProbeHandle,
+    dataflow::{
+        channels::pact::Pipeline,
+        operators::{
+            capture::{EventLink, Replay},
+            Inspect, Operator,
+        },
+        ProbeHandle,
+    },
+    logging::{BatchLogger, TimelyProgressEvent},
     order::TotalOrder,
     progress::{timestamp::Refines, Timestamp},
     worker::Worker,
@@ -67,23 +79,23 @@ where
         //     result.leave()
         // });
 
-        let equisat = equisat::saturate(scope, &*ident_generation, &graph);
-        equisat.render_graph("equisat", sender.clone());
+        // let equisat = equisat::saturate(scope, &*ident_generation, &graph);
+        // equisat.render_graph("equisat", sender.clone());
 
         let graph = folding::constant_folding(scope, &graph, ident_generation);
         graph.render_graph("constant folding", sender.clone());
 
-        let graph = cse::cse(scope, &graph);
-        graph.render_graph("cse", sender.clone());
+        // let graph = cse::cse(scope, &graph);
+        // graph.render_graph("cse", sender.clone());
 
         let graph = dce::dce(scope, &graph);
         graph.render_graph("dce", sender.clone());
 
-        let trivial_inline = inline::trivial_inline(scope, &graph);
-        trivial_inline.render_graph("trivial inline", sender.clone());
+        // let trivial_inline = inline::trivial_inline(scope, &graph);
+        // trivial_inline.render_graph("trivial inline", sender.clone());
 
-        let _loops = loops::detect_loops(scope, &graph)
-            .inspect(|x| tracing::trace!("looping edge: {:?}", x));
+        // let _loops = loops::detect_loops(scope, &graph)
+        //     .inspect(|x| tracing::trace!("looping edge: {:?}", x));
 
         graph.render_graph("output", sender.clone());
         (inputs, graph.arrange().trace(), graph.probe())
