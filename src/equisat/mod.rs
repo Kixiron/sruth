@@ -235,17 +235,25 @@ where
         self.enodes_feedback.debug();
     }
 
-    fn feedback(self) -> (ENodeCollection<S, R>, EClassMerger<S, R>) {
+    fn feedback(
+        self,
+    ) -> (
+        Collection<S, (ENodeId, ENode), R>,
+        Collection<S, (ENodeId, EClassId), R>,
+    ) {
         let mut scope = self.scope();
 
-        let nodes = self
-            .enodes_feedback
+        self.enodes_feedback
             .set(&concatenate(&mut scope, self.enodes.into_iter()));
-        let edges = self
-            .eclass_mergers_feedback
+        self.eclass_mergers_feedback
             .set(&concatenate(&mut scope, self.eclass_mergers.into_iter()));
 
-        (nodes, edges)
+        (
+            self.canon_enodes
+                .as_collection(|&enode_id, enode| (enode_id, enode.clone())),
+            self.eclass_canon_lookup
+                .as_collection(|&src, &dest| (src, dest)),
+        )
     }
 }
 
@@ -472,7 +480,7 @@ mod tests {
         dataflow::Diff,
         equisat::{Add, EClassId, EGraph, ENode, ENodeId, RedundantAddSubChain, Sub},
     };
-    use differential_dataflow::input::Input;
+    use differential_dataflow::{input::Input, operators::Consolidate};
     use timely::{
         dataflow::{operators::probe::Handle, Scope},
         order::Product,
@@ -500,10 +508,12 @@ mod tests {
                 });
 
                 nodes
+                    .consolidate()
                     .inspect(|x| println!("Node: {:?}", x))
                     .probe_with(&mut probe);
 
                 edges
+                    .consolidate()
                     .inspect(|x| println!("Edge: {:?}", x))
                     .probe_with(&mut probe);
 
