@@ -143,14 +143,11 @@ where
     S::Timestamp: Lattice,
     R: Semigroup,
 {
-    /// Collection of enodes and their ids
     enodes: Vec<ENodeCollection<S, R>>,
-    /// A read-only collection of eclass ids to their parent eclasses
     eclass_mergers: Vec<EClassMerger<S, R>>,
-    /// A write-only collection of eclass ids to their parent eclasses
-    eclass_canon_lookup: EClassLookup<S, R>,
     eclass_mergers_feedback: SemigroupVariable<S, (EClassId, EClassId), R>,
     enodes_feedback: SemigroupVariable<S, (ENodeId, ENode), R>,
+    eclass_canon_lookup: EClassLookup<S, R>,
     canon_enodes: ENodeLookup<S, R>,
     canon_enode_ids: ENodeIds<S, R>,
     scope: S,
@@ -194,8 +191,7 @@ where
         F: Rewrite<S, R>,
     {
         self.eclass_mergers
-            .push(rewrite.render(&self.enodes_feedback, &self.eclass_canon_lookup));
-
+            .push(rewrite.render(&self.enodes_feedback));
         self
     }
 
@@ -328,17 +324,13 @@ where
             let canon_edges = canon_enodes.reduce(|_enode, enodes, edges| {
                 let (&first_enode, _) = enodes[0].clone();
 
-                if enodes.len() == 1 {
-                    edges.push(((first_enode, first_enode), R::from(1)));
-                } else {
-                    edges.reserve(enodes.len() - 1);
-                    edges.extend(
-                        enodes
-                            .iter()
-                            .skip(1)
-                            .map(|&(&enode, _)| ((first_enode, enode), R::from(1))),
-                    );
-                }
+                edges.reserve(enodes.len() - 1);
+                edges.extend(
+                    enodes
+                        .iter()
+                        .skip(1)
+                        .map(|&(&enode, _)| ((first_enode, enode), R::from(1))),
+                );
             });
 
             let canon_enodes = canon_enodes.reduce(|_enode, enode_ids, canon_enode_ids| {
@@ -398,11 +390,7 @@ where
     S::Timestamp: Lattice,
     R: Semigroup,
 {
-    fn render(
-        self,
-        enodes: &ENodeCollection<S, R>,
-        eclass_lookup: &EClassLookup<S, R>,
-    ) -> EClassMerger<S, R>;
+    fn render(self, enodes: &ENodeCollection<S, R>) -> EClassMerger<S, R>;
 }
 
 impl<S, R, F> Rewrite<S, R> for F
@@ -410,14 +398,10 @@ where
     S: Scope,
     S::Timestamp: Lattice,
     R: Semigroup,
-    F: FnOnce(&ENodeCollection<S, R>, &EClassLookup<S, R>) -> EClassMerger<S, R>,
+    F: FnOnce(&ENodeCollection<S, R>) -> EClassMerger<S, R>,
 {
-    fn render(
-        self,
-        enodes: &ENodeCollection<S, R>,
-        eclass_lookup: &EClassLookup<S, R>,
-    ) -> EClassMerger<S, R> {
-        (self)(enodes, eclass_lookup)
+    fn render(self, enodes: &ENodeCollection<S, R>) -> EClassMerger<S, R> {
+        (self)(enodes)
     }
 }
 
@@ -430,23 +414,15 @@ where
     S::Timestamp: Lattice,
     R: Semigroup + ExchangeData + Multiply<Output = R>,
 {
-    fn render(
-        self,
-        enodes: &ENodeCollection<S, R>,
-        eclass_lookup: &EClassLookup<S, R>,
-    ) -> EClassMerger<S, R> {
+    fn render(self, enodes: &ENodeCollection<S, R>) -> EClassMerger<S, R> {
         // Canonicalize the enode classes
-        let canon_enodes = enodes
-            .filter_map(|(enode_id, enode)| {
-                if enode.is_add() || enode.is_sub() {
-                    Some((enode_id, enode))
-                } else {
-                    None
-                }
-            })
-            .join_core(eclass_lookup, |_enode_id, enode, &canon_eclass| {
-                iter::once((canon_eclass, enode.clone()))
-            });
+        let canon_enodes = enodes.filter_map(|(enode_id, enode)| {
+            if enode.is_add() || enode.is_sub() {
+                Some((enode_id.as_eclass(), enode))
+            } else {
+                None
+            }
+        });
 
         // Split the stream of add & sub nodes into their components
         let (add, sub) = canon_enodes.filter_split(|(eclass, enode)| {
