@@ -1,5 +1,5 @@
 use crate::dataflow::{
-    operators::{FilterSplit, InspectExt, Reverse},
+    operators::{FilterMap, FilterSplit, InspectExt, Reverse, Split},
     Time,
 };
 use abomonation_derive::Abomonation;
@@ -185,10 +185,11 @@ where
 
     pub fn add_rewrite<F>(&mut self, rewrite: F) -> &mut Self
     where
-        F: FnOnce(&ENodeCollection<S, R>, &EClassLookup<S, R>) -> EClassMerger<S, R>,
+        F: Rewrite<S, R>,
     {
         self.eclass_mergers
-            .push(rewrite(&self.enodes_feedback, &self.eclass_canon_lookup));
+            .push(rewrite.render(&self.enodes_feedback, &self.eclass_canon_lookup));
+
         self
     }
 
@@ -234,16 +235,17 @@ where
         self.enodes_feedback.debug();
     }
 
-    fn feedback(self) -> Collection<S, (ENodeId, ENode), R> {
+    fn feedback(self) -> (ENodeCollection<S, R>, EClassMerger<S, R>) {
         let mut scope = self.scope();
 
-        self.eclass_mergers_feedback
-            .set(&concatenate(&mut scope, self.eclass_mergers.into_iter()))
-            .debug();
+        let nodes = self
+            .enodes_feedback
+            .set(&concatenate(&mut scope, self.enodes.into_iter()));
+        let edges = self
+            .eclass_mergers_feedback
+            .set(&concatenate(&mut scope, self.eclass_mergers.into_iter()));
 
-        self.enodes_feedback
-            .set(&concatenate(&mut scope, self.enodes.into_iter()))
-            .debug()
+        (nodes, edges)
     }
 }
 
@@ -314,23 +316,21 @@ where
             )
             .arrange_by_key();
 
-        let canon_edges = canon_enodes
-            .reduce(|_enode, enodes, edges| {
-                let (&first_enode, _) = enodes[0].clone();
+        let canon_edges = canon_enodes.reduce(|_enode, enodes, edges| {
+            let (&first_enode, _) = enodes[0].clone();
 
-                if enodes.len() == 1 {
-                    edges.push(((first_enode, first_enode), R::from(1)));
-                } else {
-                    edges.reserve(enodes.len() - 1);
-                    edges.extend(
-                        enodes
-                            .iter()
-                            .skip(1)
-                            .map(|&(&enode, _)| ((first_enode, enode), R::from(1))),
-                    );
-                }
-            })
-            .debug();
+            if enodes.len() == 1 {
+                edges.push(((first_enode, first_enode), R::from(1)));
+            } else {
+                edges.reserve(enodes.len() - 1);
+                edges.extend(
+                    enodes
+                        .iter()
+                        .skip(1)
+                        .map(|&(&enode, _)| ((first_enode, enode), R::from(1))),
+                );
+            }
+        });
 
         let canon_enode_ids = canon_edges
             .map(|(_, (canonical_enode_id, _))| canonical_enode_id)
@@ -380,17 +380,111 @@ where
     )
 }
 
+pub trait Rewrite<S, R>
+where
+    S: Scope,
+    S::Timestamp: Lattice,
+    R: Semigroup,
+{
+    fn render(
+        self,
+        enodes: &ENodeCollection<S, R>,
+        eclass_lookup: &EClassLookup<S, R>,
+    ) -> EClassMerger<S, R>;
+}
+
+impl<S, R, F> Rewrite<S, R> for F
+where
+    S: Scope,
+    S::Timestamp: Lattice,
+    R: Semigroup,
+    F: FnOnce(&ENodeCollection<S, R>, &EClassLookup<S, R>) -> EClassMerger<S, R>,
+{
+    fn render(
+        self,
+        enodes: &ENodeCollection<S, R>,
+        eclass_lookup: &EClassLookup<S, R>,
+    ) -> EClassMerger<S, R> {
+        (self)(enodes, eclass_lookup)
+    }
+}
+
+/// `(add ?x (sub ?y ?x)) => ?y`
+pub struct RedundantAddSubChain;
+
+impl<S, R> Rewrite<S, R> for RedundantAddSubChain
+where
+    S: Scope,
+    S::Timestamp: Lattice,
+    R: Semigroup + ExchangeData + Multiply<Output = R>,
+{
+    fn render(
+        self,
+        enodes: &ENodeCollection<S, R>,
+        eclass_lookup: &EClassLookup<S, R>,
+    ) -> EClassMerger<S, R> {
+        // Canonicalize the enode classes
+        let canon_enodes = enodes
+            .filter_map(|(enode_id, enode)| {
+                if enode.is_add() || enode.is_sub() {
+                    Some((enode_id.as_eclass(), enode))
+                } else {
+                    None
+                }
+            })
+            .join_core(eclass_lookup, |_enode_id, enode, &canon_eclass| {
+                iter::once((canon_eclass, enode.clone()))
+            });
+
+        // Split the stream of add & sub nodes into their components
+        let (add, sub) = canon_enodes.filter_split(|(eclass, enode)| {
+            if let Some(add) = enode.as_add() {
+                (Some((eclass, add)), None)
+            } else if let Some(sub) = enode.as_sub() {
+                (None, Some((eclass, sub)))
+            } else {
+                // We've already filtered out non-add/sub nodes when
+                // canonicalizing the eclass ids
+                unreachable!()
+            }
+        });
+
+        // `(add ?lhs ?rhs)`
+        let (add_lhs, add_rhs) =
+            add.split(|(eclass, add)| (((add.lhs(), eclass), ()), (add.rhs(), eclass)));
+
+        // `(sub ?lhs ?rhs)`
+        let (sub_lhs, sub_rhs) =
+            sub.split(|(eclass, sub)| ((eclass, sub.lhs()), (eclass, sub.rhs())));
+
+        // Select out add nodes where the rhs is a sub node
+        // `(add _ (sub _, ?rhs))`
+        let add_with_sub_operands = add_rhs
+            .join_map(&sub_rhs, |&sub_eclass, &add_eclass, &sub_rhs| {
+                ((sub_rhs, add_eclass), sub_eclass)
+            });
+
+        // Filter out all matches where the sub's rhs doesn't match the add's lhs
+        // `(add ?x (sub _, ?x))`
+        let has_shared_operands = add_lhs.join_map(
+            &add_with_sub_operands,
+            |&(_common_operand, add_eclass), &(), &sub_eclass| (sub_eclass, add_eclass),
+        );
+
+        // `(add ?x (sub ?y, ?x)) => ?y`
+        has_shared_operands.join_map(&sub_lhs, |_sub_eclass, &add_eclass, &sub_lhs| {
+            (add_eclass, sub_lhs)
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{
-        dataflow::{
-            operators::{FilterMap, InspectExt},
-            Diff,
-        },
-        equisat::{Add, EClassId, EGraph, ENode, ENodeId, Sub},
+        dataflow::Diff,
+        equisat::{Add, EClassId, EGraph, ENode, ENodeId, RedundantAddSubChain, Sub},
     };
-    use differential_dataflow::{input::Input, operators::JoinCore};
-    use std::iter;
+    use differential_dataflow::input::Input;
     use timely::{
         dataflow::{operators::probe::Handle, Scope},
         order::Product,
@@ -404,33 +498,25 @@ mod tests {
             let mut enodes = worker.dataflow::<usize, _, _>(|scope| {
                 let (enode_input, enodes) = scope.new_collection();
 
-                scope
-                    .iterative::<usize, _, _>(|scope| {
-                        let mut graph =
-                            EGraph::<_, Diff>::new(scope, Product::new(Default::default(), 1));
+                let (nodes, edges) = scope.iterative::<usize, _, _>(|scope| {
+                    let mut graph =
+                        EGraph::<_, Diff>::new(scope, Product::new(Default::default(), 1));
 
-                        graph
-                            .add_enodes(enodes.enter(scope))
-                            // Delete subtraction
-                            .add_rewrite(|enodes, eclass_lookup| {
-                                enodes
-                                    .debug()
-                                    .filter_map(|(enode_id, enode)| {
-                                        enode
-                                            .as_sub()
-                                            .map(move |sub| (enode_id.as_eclass(), sub.lhs()))
-                                    })
-                                    .debug()
-                                    .join_core(eclass_lookup, |_enode_id, &lhs_enode, &eclass| {
-                                        iter::once((eclass, lhs_enode))
-                                    })
-                                    .debug()
-                            });
+                    graph
+                        .add_enodes(enodes.enter(scope))
+                        .add_rewrite(RedundantAddSubChain);
 
-                        graph.debug();
-                        graph.feedback().leave()
-                    })
-                    .inspect(|x| println!("{:?}", x))
+                    let (nodes, edges) = graph.feedback();
+
+                    (nodes.leave(), edges.leave())
+                });
+
+                nodes
+                    .inspect(|x| println!("Node: {:?}", x))
+                    .probe_with(&mut probe);
+
+                edges
+                    .inspect(|x| println!("Edge: {:?}", x))
                     .probe_with(&mut probe);
 
                 enode_input
