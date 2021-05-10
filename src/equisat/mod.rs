@@ -9,11 +9,11 @@ use differential_dataflow::{
     difference::{Abelian, Multiply, Semigroup},
     lattice::Lattice,
     operators::{
-        arrange::{ArrangeByKey, Arranged, TraceAgent},
+        arrange::{ArrangeByKey, ArrangeBySelf, Arranged, TraceAgent},
         iterate::SemigroupVariable,
         Join, JoinCore, Reduce, Threshold,
     },
-    trace::implementations::ord::OrdValSpine,
+    trace::implementations::ord::{OrdKeySpine, OrdValSpine},
     Collection, ExchangeData,
 };
 use std::iter;
@@ -129,7 +129,11 @@ impl Sub {
 }
 
 type EClassLookup<S, R> =
-    Arranged<S, TraceAgent<OrdValSpine<EClassId, EClassId, <S as ScopeParent>::Timestamp, R>>>;
+    Arranged<S, TraceAgent<OrdValSpine<ENodeId, EClassId, <S as ScopeParent>::Timestamp, R>>>;
+type ENodeLookup<S, R> =
+    Arranged<S, TraceAgent<OrdValSpine<ENodeId, ENode, <S as ScopeParent>::Timestamp, R>>>;
+type ENodeIds<S, R> =
+    Arranged<S, TraceAgent<OrdKeySpine<ENodeId, <S as ScopeParent>::Timestamp, R>>>;
 type EClassMerger<S, R> = Collection<S, (EClassId, EClassId), R>;
 type ENodeCollection<S, R> = Collection<S, (ENodeId, ENode), R>;
 
@@ -147,7 +151,8 @@ where
     eclass_canon_lookup: EClassLookup<S, R>,
     eclass_mergers_feedback: SemigroupVariable<S, (EClassId, EClassId), R>,
     enodes_feedback: SemigroupVariable<S, (ENodeId, ENode), R>,
-    canon_enode_ids: Collection<S, ENodeId, R>,
+    canon_enodes: ENodeLookup<S, R>,
+    canon_enode_ids: ENodeIds<S, R>,
     scope: S,
 }
 
@@ -164,7 +169,7 @@ where
         let eclass_mergers_feedback = SemigroupVariable::new(scope, summary.clone());
         let enodes_feedback = SemigroupVariable::new(scope, summary);
 
-        let (eclass_canon_lookup, canon_enode_ids) =
+        let (eclass_canon_lookup, canon_enodes, canon_enode_ids) =
             union(scope, &enodes_feedback, &eclass_mergers_feedback);
 
         Self {
@@ -173,6 +178,7 @@ where
             eclass_canon_lookup,
             eclass_mergers_feedback,
             enodes_feedback,
+            canon_enodes,
             canon_enode_ids,
             scope: scope.clone(),
         }
@@ -204,7 +210,6 @@ where
         self.eclass_mergers.iter().for_each(|merger| {
             merger.probe_with(probe);
         });
-        self.canon_enode_ids.probe_with(probe);
     }
 
     // pub fn enter<'a, T>(&self, scope: &mut Child<'a, S, T>) -> EGraph<Child<'a, S, T>, R>
@@ -230,7 +235,6 @@ where
         self.eclass_canon_lookup
             .as_collection(|&src, &dest| (src, dest))
             .debug();
-        self.canon_enode_ids.debug();
         self.eclass_mergers_feedback.debug();
         self.enodes_feedback.debug();
     }
@@ -253,104 +257,112 @@ fn union<S, R>(
     scope: &mut S,
     enodes: &Collection<S, (ENodeId, ENode), R>,
     raw_eclass_mergers: &Collection<S, (EClassId, EClassId), R>,
-) -> (EClassLookup<S, R>, Collection<S, ENodeId, R>)
+) -> (EClassLookup<S, R>, ENodeLookup<S, R>, ENodeIds<S, R>)
 where
     S: Scope,
     S::Timestamp: Lattice,
     R: Abelian + ExchangeData + Multiply<Output = R> + From<i8>,
 {
-    let (canon_enode_ids, eclass_canon_lookup) = scope.iterative::<Time, _, _>(|scope| {
-        let enodes = enodes.enter(scope);
-        let eclass_mergers = SemigroupVariable::new(scope, Product::new(Default::default(), 1));
+    let (canon_enodes, eclass_canon_lookup, canon_enode_ids) =
+        scope.iterative::<Time, _, _>(|scope| {
+            let enodes = enodes.enter(scope);
+            let eclass_mergers = SemigroupVariable::new(scope, Product::new(Default::default(), 1));
 
-        let union_find = derive_canonical_eclass_ids(
-            &eclass_mergers
-                .concat(&raw_eclass_mergers.enter(scope))
-                // This distinct could be unnecessary, but it's here to make sure that the
-                // multiplicities from the variable don't overflow within the `propagate_core()`
-                // call inside of canon id derivation
-                .distinct_core(),
-            &enodes,
-        );
+            let union_find = derive_canonical_eclass_ids(
+                &eclass_mergers
+                    .concat(&raw_eclass_mergers.enter(scope))
+                    // This distinct could be unnecessary, but it's here to make sure that the
+                    // multiplicities from the variable don't overflow within the `propagate_core()`
+                    // call inside of canon id derivation
+                    .distinct_core(),
+                &enodes,
+            );
 
-        let eclass_union_find = union_find
-            .map(|(enode, eclass)| (enode.as_eclass(), eclass))
-            .arrange_by_key();
+            let eclass_union_find = union_find
+                .map(|(enode, eclass)| (enode.as_eclass(), eclass))
+                .arrange_by_key();
 
-        let (add_lhs, add_rhs) = enodes.filter_split(|(enode_id, enode)| {
-            if let Some(add) = enode.as_add() {
-                (Some((add.lhs(), enode_id)), Some((add.rhs(), enode_id)))
-            } else {
-                (None, None)
-            }
-        });
-        let canon_add_lhs = add_lhs.join_core(&eclass_union_find, |_, &parent_enode, &eclass| {
-            iter::once((parent_enode, eclass))
-        });
-        let canon_add_rhs = add_rhs.join_core(&eclass_union_find, |_, &parent_enode, &eclass| {
-            iter::once((parent_enode, eclass))
-        });
+            let (add_lhs, add_rhs) = enodes.filter_split(|(enode_id, enode)| {
+                if let Some(add) = enode.as_add() {
+                    (Some((add.lhs(), enode_id)), Some((add.rhs(), enode_id)))
+                } else {
+                    (None, None)
+                }
+            });
+            let canon_add_lhs = add_lhs
+                .join_core(&eclass_union_find, |_, &parent_enode, &eclass| {
+                    iter::once((parent_enode, eclass))
+                });
+            let canon_add_rhs = add_rhs
+                .join_core(&eclass_union_find, |_, &parent_enode, &eclass| {
+                    iter::once((parent_enode, eclass))
+                });
 
-        let (sub_lhs, sub_rhs) = enodes.filter_split(|(enode_id, enode)| {
-            if let Some(sub) = enode.as_sub() {
-                (Some((sub.lhs(), enode_id)), Some((sub.rhs(), enode_id)))
-            } else {
-                (None, None)
-            }
-        });
-        let canon_sub_lhs = sub_lhs.join_core(&eclass_union_find, |_, &parent_enode, &eclass| {
-            iter::once((parent_enode, eclass))
-        });
-        let canon_sub_rhs = sub_rhs.join_core(&eclass_union_find, |_, &parent_enode, &eclass| {
-            iter::once((parent_enode, eclass))
-        });
+            let (sub_lhs, sub_rhs) = enodes.filter_split(|(enode_id, enode)| {
+                if let Some(sub) = enode.as_sub() {
+                    (Some((sub.lhs(), enode_id)), Some((sub.rhs(), enode_id)))
+                } else {
+                    (None, None)
+                }
+            });
+            let canon_sub_lhs = sub_lhs
+                .join_core(&eclass_union_find, |_, &parent_enode, &eclass| {
+                    iter::once((parent_enode, eclass))
+                });
+            let canon_sub_rhs = sub_rhs
+                .join_core(&eclass_union_find, |_, &parent_enode, &eclass| {
+                    iter::once((parent_enode, eclass))
+                });
 
-        let canon_enodes = canon_add_lhs
-            .join_map(&canon_add_rhs, |&enode, &lhs, &rhs| {
-                (ENode::Add(Add::new(lhs, rhs)), enode)
-            })
-            .concat(
-                &canon_sub_lhs.join_map(&canon_sub_rhs, |&enode, &lhs, &rhs| {
-                    (ENode::Sub(Sub::new(lhs, rhs)), enode)
-                }),
-            )
-            .arrange_by_key();
+            let canon_enodes = canon_add_lhs
+                .join_map(&canon_add_rhs, |&enode, &lhs, &rhs| {
+                    (ENode::Add(Add::new(lhs, rhs)), enode)
+                })
+                .concat(
+                    &canon_sub_lhs.join_map(&canon_sub_rhs, |&enode, &lhs, &rhs| {
+                        (ENode::Sub(Sub::new(lhs, rhs)), enode)
+                    }),
+                )
+                .arrange_by_key();
 
-        let canon_edges = canon_enodes.reduce(|_enode, enodes, edges| {
-            let (&first_enode, _) = enodes[0].clone();
+            let canon_edges = canon_enodes.reduce(|_enode, enodes, edges| {
+                let (&first_enode, _) = enodes[0].clone();
 
-            if enodes.len() == 1 {
-                edges.push(((first_enode, first_enode), R::from(1)));
-            } else {
-                edges.reserve(enodes.len() - 1);
-                edges.extend(
-                    enodes
-                        .iter()
-                        .skip(1)
-                        .map(|&(&enode, _)| ((first_enode, enode), R::from(1))),
-                );
-            }
-        });
+                if enodes.len() == 1 {
+                    edges.push(((first_enode, first_enode), R::from(1)));
+                } else {
+                    edges.reserve(enodes.len() - 1);
+                    edges.extend(
+                        enodes
+                            .iter()
+                            .skip(1)
+                            .map(|&(&enode, _)| ((first_enode, enode), R::from(1))),
+                    );
+                }
+            });
 
-        let canon_enode_ids = canon_edges
-            .map(|(_, (canonical_enode_id, _))| canonical_enode_id)
-            .leave()
-            .distinct_core::<R>();
+            let canon_enodes = canon_enodes.reduce(|_enode, enode_ids, canon_enode_ids| {
+                canon_enode_ids.push((*enode_ids[0].0, R::from(1)));
+            });
 
-        let canon_enode_edges =
-            canon_edges.map(|(_enode, (src, dest))| (src.as_eclass(), dest.as_eclass()));
-        let canon_eclass_lookup = canon_enode_edges.concat(&canon_enode_edges.reverse());
-
-        (
-            canon_enode_ids,
-            eclass_mergers
-                .set(&canon_eclass_lookup)
+            let canon_enode_ids = canon_enodes
+                .map(|(_enode, canonical_enode_id)| canonical_enode_id)
                 .leave()
-                .arrange_by_key(),
-        )
-    });
+                .arrange_by_self();
 
-    (eclass_canon_lookup, canon_enode_ids)
+            let canon_enode_edges =
+                canon_edges.map(|(_enode, (src, dest))| (src.as_eclass(), dest.as_eclass()));
+            let canon_eclass_lookup = canon_enode_edges.concat(&canon_enode_edges.reverse());
+            eclass_mergers.set(&canon_eclass_lookup);
+
+            (
+                canon_enodes.reverse().leave().arrange_by_key(),
+                union_find.leave().arrange_by_key(),
+                canon_enode_ids,
+            )
+        });
+
+    (eclass_canon_lookup, canon_enodes, canon_enode_ids)
 }
 
 fn derive_canonical_eclass_ids<S, R>(
@@ -427,7 +439,7 @@ where
         let canon_enodes = enodes
             .filter_map(|(enode_id, enode)| {
                 if enode.is_add() || enode.is_sub() {
-                    Some((enode_id.as_eclass(), enode))
+                    Some((enode_id, enode))
                 } else {
                     None
                 }
