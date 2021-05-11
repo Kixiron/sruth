@@ -515,9 +515,9 @@ where
             let enodes_d = enodes.differentiate(delta);
             let eclass_lookup_alt = eclass_lookup.enter_at(
                 delta,
-                |_, _, time| AltNeu::alt(time.clone()),
+                |_enode, _eclass, time| AltNeu::alt(time.clone()),
                 // FIXME: `.saturating_sub(1)`
-                |time| time.time.clone(),
+                |_time| Timestamp::minimum(),
             );
 
             // EClassMerger(a, f) :-
@@ -529,19 +529,82 @@ where
             //     EClassLookup(d_raw, c), /* [c d] */
             //     EClassLookup(f_raw, f),
             //     EClassLookup(e_raw, b). /* [b e] */
-            // All add nodes
             let add_nodes =
-                enodes_d.filter_map(|(enode_id, enode)| enode.as_add().map(|add| (enode_id, add)));
+                enodes.filter_map(|(enode_id, enode)| enode.as_add().map(|add| (enode_id, add)));
+            let d_add_nodes = add_nodes.differentiate(delta);
 
-            // All sub nodes
             let sub_nodes =
-                enodes_d.filter_map(|(enode_id, enode)| enode.as_sub().map(|sub| (enode_id, sub)));
+                enodes.filter_map(|(enode_id, enode)| enode.as_sub().map(|sub| (enode_id, sub)));
+            let d_sub_nodes = sub_nodes.differentiate(delta);
 
-            let canon_add_rhs = add_nodes
-                // Canonicalize the add eclasses
-                .join_core(&eclass_lookup_alt, |_enode_id, add, &add_eclass| {
-                    iter::once((add.rhs().as_enode(), (add.clone(), add_eclass)))
-                })
+            let (add_lhs, add_rhs) = add_nodes.split(|(enode, add)| {
+                ((add.lhs().as_enode(), enode), (add.rhs().as_enode(), enode))
+            });
+            let (d_add_lhs, d_add_rhs) =
+                (add_lhs.differentiate(delta), add_rhs.differentiate(delta));
+
+            let (sub_lhs, sub_rhs) = sub_nodes.split(|(enode, sub)| {
+                ((sub.lhs().as_enode(), enode), (sub.rhs().as_enode(), enode))
+            });
+            let (d_sub_lhs, d_sub_rhs) =
+                (sub_lhs.differentiate(delta), sub_rhs.differentiate(delta));
+
+            let canon_add_eclass = d_add_nodes
+                .join_core(&eclass_lookup_alt, |&add_id, _, &add_eclass| {
+                    iter::once((add_eclass, add_id))
+                });
+
+            let canon_sub_eclass = d_sub_nodes
+                .join_core(&eclass_lookup_alt, |&sub_id, _, &sub_eclass| {
+                    iter::once((sub_eclass, sub_id))
+                });
+
+            let canon_add_lhs = d_add_lhs
+                .join_core(&eclass_lookup_alt, |_, &add_eclass, &lhs_eclass| {
+                    iter::once((lhs_eclass, add_eclass))
+                });
+
+            let canon_add_rhs = d_add_rhs
+                .join_core(&eclass_lookup_alt, |_, &add_eclass, &rhs_eclass| {
+                    iter::once((rhs_eclass, add_eclass))
+                });
+
+            let canon_sub_lhs = d_sub_lhs
+                .join_core(&eclass_lookup_alt, |_, &sub_eclass, &lhs_eclass| {
+                    iter::once((sub_eclass, lhs_eclass))
+                });
+
+            let canon_sub_rhs = d_sub_rhs
+                .join_core(&eclass_lookup_alt, |_, &sub_eclass, &rhs_eclass| {
+                    iter::once((rhs_eclass, sub_eclass))
+                });
+
+            let rhs_is_add =
+                canon_add_rhs.join_map(&canon_sub_eclass, |_, &add_eclass, _| (add_eclass, ()));
+
+            let add_lhs_is_sub_rhs = canon_add_lhs.join_map(
+                &canon_sub_rhs,
+                |&raw_add_eclass, &add_eclass, &sub_eclass| {
+                    (add_eclass, (raw_add_eclass, sub_eclass))
+                },
+            );
+
+            rhs_is_add
+                .join_map(
+                    &add_lhs_is_sub_rhs,
+                    |&add_eclass, _, &(raw_add_eclass, raw_sub_eclass)| {
+                        (raw_sub_eclass, (raw_add_eclass, add_eclass))
+                    },
+                )
+                .join_map(
+                    &canon_sub_lhs,
+                    |_, &(raw_add_eclass, _add_eclass), &sub_lhs_eclass| {
+                        (raw_add_eclass, sub_lhs_eclass)
+                    },
+                )
+                .integrate()
+
+            /*
                 // Canonicalize the add's right hand side eclasses
                 .join_core(&eclass_lookup_alt, |_, (add, add_eclass), &rhs_eclass| {
                     iter::once((rhs_eclass, (add.clone(), *add_eclass)))
@@ -599,7 +662,7 @@ where
                 .join_core(&eclass_lookup_alt, |_, &add_eclass, &sub_lhs_eclass| {
                     iter::once((add_eclass, sub_lhs_eclass))
                 })
-                .integrate()
+                .integrate()*/
         })
     }
 }
