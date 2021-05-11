@@ -11,7 +11,7 @@ use differential_dataflow::{
     operators::{
         arrange::{ArrangeByKey, ArrangeBySelf, Arranged, TraceAgent},
         iterate::SemigroupVariable,
-        Join, JoinCore, Reduce, Threshold,
+        Consolidate, Join, JoinCore, Reduce, Threshold,
     },
     trace::implementations::ord::{OrdKeySpine, OrdValSpine},
     Collection, ExchangeData,
@@ -247,7 +247,10 @@ where
         self.enodes_feedback.debug();
     }
 
-    fn feedback(self) -> (ENodeCollection<S, R>, Collection<S, (ENodeId, EClassId), R>) {
+    fn feedback(self) -> (ENodeCollection<S, R>, Collection<S, (ENodeId, EClassId), R>)
+    where
+        R: ExchangeData,
+    {
         let mut scope = self.scope();
 
         self.enodes_feedback
@@ -467,79 +470,93 @@ where
         eclass_lookup: &ENodeEClassLookup<S, R>,
         eclass_lookup_reverse: &EClassENodeLookup<S, R>,
     ) -> EClassMerger<S, R> {
-        let add_nodes =
-            enodes.filter_map(|(enode_id, enode)| enode.as_add().map(|add| (enode_id, add)));
+        scope.scoped("RedundantAddSubChain DeltaQuery", |delta| {
+            let enodes = enodes.differentiate(delta);
+            let eclass_lookup = eclass_lookup.enter_at(
+                delta,
+                |_, _, time| AltNeu::neu(time.clone()),
+                |_time| Timestamp::minimum(),
+            );
 
-        let canon_add_nodes = add_nodes.join_core(eclass_lookup, |&add_enode, add, &add_eclass| {
-            iter::once((add.lhs().as_enode(), (add_enode, add.clone(), add_eclass)))
-        });
+            let add_nodes =
+                enodes.filter_map(|(enode_id, enode)| enode.as_add().map(|add| (enode_id, add)));
 
-        let canon_add_lhs = canon_add_nodes.join_core(
-            eclass_lookup,
-            |_, &(add_enode, ref add, add_eclass), &lhs_eclass| {
-                iter::once((add.rhs().as_enode(), (add_enode, add_eclass, lhs_eclass)))
-            },
-        );
+            let canon_add_nodes =
+                add_nodes.join_core(&eclass_lookup, |&add_enode, add, &add_eclass| {
+                    iter::once((add.lhs().as_enode(), (add_enode, add.clone(), add_eclass)))
+                });
 
-        let canon_add_rhs = canon_add_lhs.join_core(
-            eclass_lookup,
-            |_, &(add_enode, add_eclass, lhs_eclass), &rhs_eclass| {
-                iter::once(((), (add_enode, add_eclass, lhs_eclass, rhs_eclass)))
-            },
-        );
+            let canon_add_lhs = canon_add_nodes.join_core(
+                &eclass_lookup,
+                |_, &(add_enode, ref add, add_eclass), &lhs_eclass| {
+                    iter::once((add.rhs().as_enode(), (add_enode, add_eclass, lhs_eclass)))
+                },
+            );
 
-        let sub_nodes =
-            enodes.filter_map(|(enode_id, enode)| enode.as_sub().map(|sub| ((), (enode_id, sub))));
+            let canon_add_rhs = canon_add_lhs.join_core(
+                &eclass_lookup,
+                |_, &(add_enode, add_eclass, lhs_eclass), &rhs_eclass| {
+                    iter::once(((), (add_enode, add_eclass, lhs_eclass, rhs_eclass)))
+                },
+            );
 
-        let add_joined_sub = canon_add_rhs.join_map(
-            &sub_nodes,
-            |&(),
-             &(add_enode, add_eclass, add_lhs_eclass, add_rhs_eclass),
-             &(sub_enode, ref sub)| {
-                (
-                    sub_enode,
+            let sub_nodes = enodes
+                .filter_map(|(enode_id, enode)| enode.as_sub().map(|sub| ((), (enode_id, sub))));
+
+            let add_joined_sub = canon_add_rhs.join_map(
+                &sub_nodes,
+                |&(),
+                 &(add_enode, add_eclass, add_lhs_eclass, add_rhs_eclass),
+                 &(sub_enode, ref sub)| {
                     (
-                        add_enode,
-                        add_eclass,
-                        add_lhs_eclass,
-                        add_rhs_eclass,
-                        sub.clone(),
-                    ),
+                        sub_enode,
+                        (
+                            add_enode,
+                            add_eclass,
+                            add_lhs_eclass,
+                            add_rhs_eclass,
+                            sub.clone(),
+                        ),
+                    )
+                },
+            );
+
+            let canon_sub_eclasses = add_joined_sub.join_core(
+                &eclass_lookup,
+                |_,
+                 &(add_enode, add_eclass, add_lhs_eclass, add_rhs_eclass, ref sub),
+                 &sub_eclass| {
+                    if sub_eclass == add_rhs_eclass {
+                        Some((
+                            sub.rhs().as_enode(),
+                            (add_enode, add_eclass, add_lhs_eclass, sub.clone()),
+                        ))
+                    } else {
+                        None
+                    }
+                },
+            );
+
+            let canon_sub_rhs = canon_sub_eclasses.join_core(
+                &eclass_lookup,
+                |_, &(add_enode, add_eclass, add_lhs_eclass, ref sub), &sub_rhs_eclass| {
+                    if sub_rhs_eclass == add_lhs_eclass {
+                        Some((sub.lhs().as_enode(), (add_enode, add_eclass)))
+                    } else {
+                        None
+                    }
+                },
+            );
+
+            canon_sub_rhs
+                .join_core(
+                    &eclass_lookup,
+                    |_, &(add_enode, _add_eclass), &sub_lhs_eclass| {
+                        iter::once((add_enode.as_eclass(), sub_lhs_eclass))
+                    },
                 )
-            },
-        );
-
-        let canon_sub_eclasses = add_joined_sub.join_core(
-            eclass_lookup,
-            |_, &(add_enode, add_eclass, add_lhs_eclass, add_rhs_eclass, ref sub), &sub_eclass| {
-                if sub_eclass == add_rhs_eclass {
-                    Some((
-                        sub.rhs().as_enode(),
-                        (add_enode, add_eclass, add_lhs_eclass, sub.clone()),
-                    ))
-                } else {
-                    None
-                }
-            },
-        );
-
-        let canon_sub_rhs = canon_sub_eclasses.join_core(
-            eclass_lookup,
-            |_, &(add_enode, add_eclass, add_lhs_eclass, ref sub), &sub_rhs_eclass| {
-                if sub_rhs_eclass == add_lhs_eclass {
-                    Some((sub.lhs().as_enode(), (add_enode, add_eclass)))
-                } else {
-                    None
-                }
-            },
-        );
-
-        canon_sub_rhs.join_core(
-            eclass_lookup,
-            |_, &(add_enode, _add_eclass), &sub_lhs_eclass| {
-                iter::once((add_enode.as_eclass(), sub_lhs_eclass))
-            },
-        )
+                .integrate()
+        })
 
         // // Canonicalize the enode classes
         // let canon_enodes = enodes.filter_map(|(enode_id, enode)| {
