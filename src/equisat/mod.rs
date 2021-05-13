@@ -495,8 +495,8 @@ where
             .map(|(enode_id, add)| (add.rhs(), (enode_id, add)))
             .arrange_by_key();
 
-        let sub_nodes =
-            enodes.filter_map(|(enode_id, enode)| enode.as_sub().map(|sub| (enode_id, sub)));
+        let sub_nodes = enodes
+            .filter_map(|(enode_id, enode)| enode.as_sub().map(|sub| (enode_id.as_eclass(), sub)));
 
         let sub_nodes_by_id = sub_nodes.arrange_by_key();
         let sub_nodes_by_lhs = sub_nodes
@@ -542,7 +542,24 @@ where
                 .differentiate(delta)
                 .arrange_by_key();
 
+            let d_sub_nodes_by_lhs = sub_nodes_by_lhs
+                .as_collection(|&lhs, &(eclass, ref sub)| (lhs, (eclass, sub.clone())))
+                .differentiate(delta)
+                .arrange_by_key();
+
+            let add_nodes_by_id_alt = add_nodes_by_id.enter_at(
+                delta,
+                |_, _, time| AltNeu::alt(time.clone()),
+                |_time| Timestamp::minimum(),
+            );
+
             let add_nodes_by_lhs_alt = add_nodes_by_lhs.enter_at(
+                delta,
+                |_, _, time| AltNeu::alt(time.clone()),
+                |_time| Timestamp::minimum(),
+            );
+
+            let add_nodes_by_rhs_alt = add_nodes_by_rhs.enter_at(
                 delta,
                 |_, _, time| AltNeu::alt(time.clone()),
                 |_time| Timestamp::minimum(),
@@ -590,6 +607,18 @@ where
                 |_time| Timestamp::minimum(),
             );
 
+            let eclass_lookup_raw_canon_by_self_alt = eclass_lookup_raw_canon_by_self.enter_at(
+                delta,
+                |_, _, time| AltNeu::alt(time.clone()),
+                |_time| Timestamp::minimum(),
+            );
+
+            let sub_nodes_by_rhs_alt = sub_nodes_by_rhs.enter_at(
+                delta,
+                |_, _, time| AltNeu::alt(time.clone()),
+                |_time| Timestamp::minimum(),
+            );
+
             let changes_1 = d_add_nodes_by_lhs // 1
                 .join_core(
                     &eclass_lookup_by_raw_neu,
@@ -606,7 +635,7 @@ where
                 .join_core(
                     &eclass_lookup_by_canon_neu,
                     |_add_rhs_eclass, &(add_enode_raw, add_lhs_eclass), &sub_enode_raw| {
-                        iter::once((sub_enode_raw.as_enode(), (add_enode_raw, add_lhs_eclass)))
+                        iter::once((sub_enode_raw, (add_enode_raw, add_lhs_eclass)))
                     },
                 ) // 5
                 .join_core(
@@ -624,13 +653,13 @@ where
                     },
                 ); // 6
 
-            let changes_2 = add_nodes_by_lhs_alt // 1
+            let changes_2 = d_eclass_lookup_by_raw // 2
                 .join_core(
-                    &d_eclass_lookup_by_raw,
-                    |_add_lhs_raw, &(add_enode_raw, ref add), &add_lhs_eclass| {
+                    &add_nodes_by_lhs_alt,
+                    |_add_lhs_raw, &add_lhs_eclass, &(add_enode_raw, ref add)| {
                         iter::once((add.rhs(), (add_enode_raw, add_lhs_eclass)))
                     },
-                ) // 2
+                ) // 1
                 .join_core(
                     &eclass_lookup_by_raw_neu,
                     |_raw_add_rhs, &(add_enode_raw, add_lhs_eclass), &add_rhs_eclass| {
@@ -640,7 +669,7 @@ where
                 .join_core(
                     &eclass_lookup_by_canon_neu,
                     |_add_rhs_eclass, &(add_enode_raw, add_lhs_eclass), &sub_enode_raw| {
-                        iter::once((sub_enode_raw.as_enode(), (add_enode_raw, add_lhs_eclass)))
+                        iter::once((sub_enode_raw, (add_enode_raw, add_lhs_eclass)))
                     },
                 ) // 5
                 .join_core(
@@ -658,23 +687,23 @@ where
                     },
                 ); // 6
 
-            let changes_3 = add_nodes_by_lhs_alt // 1
+            let changes_3 = d_eclass_lookup_by_raw
+                .join_core(
+                    &add_nodes_by_rhs_alt,
+                    |_add_rhs_raw, &add_rhs_eclass, &(add_enode_raw, ref add)| {
+                        iter::once((add.lhs(), (add_rhs_eclass, add_enode_raw)))
+                    },
+                )
                 .join_core(
                     &eclass_lookup_by_raw_alt,
-                    |_add_lhs_raw, &(add_enode_raw, ref add), &add_lhs_eclass| {
-                        iter::once((add.rhs(), (add_enode_raw, add_lhs_eclass)))
-                    },
-                ) // 2
-                .join_core(
-                    &d_eclass_lookup_by_raw,
-                    |_raw_add_rhs, &(add_enode_raw, add_lhs_eclass), &add_rhs_eclass| {
+                    |_add_lhs_raw, &(add_rhs_eclass, add_enode_raw), &add_lhs_eclass| {
                         iter::once((add_rhs_eclass, (add_enode_raw, add_lhs_eclass)))
                     },
-                ) // 3
+                )
                 .join_core(
                     &eclass_lookup_by_canon_neu,
                     |_add_rhs_eclass, &(add_enode_raw, add_lhs_eclass), &sub_enode_raw| {
-                        iter::once((sub_enode_raw.as_enode(), (add_enode_raw, add_lhs_eclass)))
+                        iter::once((sub_enode_raw, (add_enode_raw, add_lhs_eclass)))
                     },
                 ) // 5
                 .join_core(
@@ -692,107 +721,104 @@ where
                     },
                 ); // 6
 
-            let changes_4 = add_nodes_by_lhs_alt // 1
+            // 456312
+            let changes_4 = d_sub_nodes_by_id
                 .join_core(
                     &eclass_lookup_by_raw_alt,
-                    |_add_lhs_raw, &(add_enode_raw, ref add), &add_lhs_eclass| {
-                        iter::once((add.rhs(), (add_enode_raw, add_lhs_eclass)))
+                    |_sub_enode_raw, sub, &sub_eclass| {
+                        iter::once((sub.rhs(), (sub_eclass, sub.lhs())))
                     },
-                ) // 2
+                )
                 .join_core(
                     &eclass_lookup_by_raw_alt,
-                    |_raw_add_rhs, &(add_enode_raw, add_lhs_eclass), &add_rhs_eclass| {
-                        iter::once((add_rhs_eclass, (add_enode_raw, add_lhs_eclass)))
+                    |_sub_rhs_enode_raw, &(sub_eclass, sub_lhs_raw), &sub_rhs_eclass| {
+                        iter::once((sub_eclass, (sub_lhs_raw, sub_rhs_eclass)))
                     },
-                ) // 3
-                .join_core(
-                    &d_eclass_lookup_by_canon,
-                    |_add_rhs_eclass, &(add_enode_raw, add_lhs_eclass), &sub_enode_raw| {
-                        iter::once((sub_enode_raw.as_enode(), (add_enode_raw, add_lhs_eclass)))
-                    },
-                ) // 5
-                .join_core(
-                    &sub_nodes_by_id_neu,
-                    |_sub_enode_raw, &(add_enode_raw, add_lhs_eclass), sub| {
-                        let sub_rhs_raw = sub.rhs();
-                        let sub_lhs_raw = sub.lhs();
-                        iter::once(((sub_rhs_raw, add_lhs_eclass), (add_enode_raw, sub_lhs_raw)))
-                    },
-                ) // 4
-                .join_core(
-                    &eclass_lookup_raw_canon_by_self_neu,
-                    |(_sub_rhs_raw, _add_lhs_eclass), &(add_enode_raw, sub_lhs_raw), _| {
-                        iter::once((add_enode_raw.as_eclass(), sub_lhs_raw))
-                    },
-                ); // 6
-
-            let changes_5 = add_nodes_by_lhs_alt // 1
-                .join_core(
-                    &eclass_lookup_by_raw_alt,
-                    |_add_lhs_raw, &(add_enode_raw, ref add), &add_lhs_eclass| {
-                        iter::once((add.rhs(), (add_enode_raw, add_lhs_eclass)))
-                    },
-                ) // 2
-                .join_core(
-                    &eclass_lookup_by_raw_alt,
-                    |_raw_add_rhs, &(add_enode_raw, add_lhs_eclass), &add_rhs_eclass| {
-                        iter::once((add_rhs_eclass, (add_enode_raw, add_lhs_eclass)))
-                    },
-                ) // 3
+                )
                 .join_core(
                     &eclass_lookup_by_canon_alt,
-                    |_add_rhs_eclass, &(add_enode_raw, add_lhs_eclass), &sub_enode_raw| {
-                        iter::once((sub_enode_raw.as_enode(), (add_enode_raw, add_lhs_eclass)))
+                    |_sub_eclass, &(sub_lhs_raw, sub_rhs_eclass), &add_rhs_raw| {
+                        iter::once((add_rhs_raw, (sub_lhs_raw, sub_rhs_eclass)))
                     },
-                ) // 5
+                )
                 .join_core(
-                    &d_sub_nodes_by_id,
-                    |_sub_enode_raw, &(add_enode_raw, add_lhs_eclass), sub| {
-                        let sub_rhs_raw = sub.rhs();
-                        let sub_lhs_raw = sub.lhs();
-                        iter::once(((sub_rhs_raw, add_lhs_eclass), (add_enode_raw, sub_lhs_raw)))
+                    &add_nodes_by_rhs_alt,
+                    |_add_rhs_raw, &(sub_lhs_raw, sub_rhs_eclass), &(add_enode_raw, ref add)| {
+                        iter::once(((add.lhs(), sub_rhs_eclass), (sub_lhs_raw, add_enode_raw)))
                     },
-                ) // 4
+                )
                 .join_core(
-                    &eclass_lookup_raw_canon_by_self_neu,
-                    |(_sub_rhs_raw, _add_lhs_eclass), &(add_enode_raw, sub_lhs_raw), _| {
+                    &eclass_lookup_raw_canon_by_self_alt,
+                    |(_add_lhs_raw, _add_lhs_eclass), &(sub_lhs_raw, add_enode_raw), &()| {
                         iter::once((add_enode_raw.as_eclass(), sub_lhs_raw))
                     },
-                ); // 6
+                );
 
-            let changes_6 = add_nodes_by_lhs_alt // 1
+            // 546312
+            let changes_5 = d_eclass_lookup_by_raw
+                .join_core(&sub_nodes_by_id_alt, |_sub_enode_raw, &sub_eclass, sub| {
+                    iter::once((sub.rhs(), (sub_eclass, sub.lhs())))
+                })
                 .join_core(
-                    &eclass_lookup_by_raw_alt,
-                    |_add_lhs_raw, &(add_enode_raw, ref add), &add_lhs_eclass| {
-                        iter::once((add.rhs(), (add_enode_raw, add_lhs_eclass)))
+                    &eclass_lookup_by_raw_neu,
+                    |_sub_rhs_raw, &(sub_lhs_raw, sub_rhs_eclass), &sub_eclass| {
+                        iter::once((sub_rhs_eclass, (sub_lhs_raw, sub_eclass)))
                     },
-                ) // 2
-                .join_core(
-                    &eclass_lookup_by_raw_alt,
-                    |_raw_add_rhs, &(add_enode_raw, add_lhs_eclass), &add_rhs_eclass| {
-                        iter::once((add_rhs_eclass, (add_enode_raw, add_lhs_eclass)))
-                    },
-                ) // 3
+                )
                 .join_core(
                     &eclass_lookup_by_canon_alt,
-                    |_add_rhs_eclass, &(add_enode_raw, add_lhs_eclass), &sub_enode_raw| {
-                        iter::once((sub_enode_raw.as_enode(), (add_enode_raw, add_lhs_eclass)))
+                    |_sub_rhs_eclass, &(sub_lhs_raw, sub_eclass), &add_lhs_raw| {
+                        iter::once((add_lhs_raw, (sub_lhs_raw, sub_eclass)))
                     },
-                ) // 5
+                )
                 .join_core(
-                    &sub_nodes_by_id_alt,
-                    |_sub_enode_raw, &(add_enode_raw, add_lhs_eclass), sub| {
-                        let sub_rhs_raw = sub.rhs();
-                        let sub_lhs_raw = sub.lhs();
-                        iter::once(((sub_rhs_raw, add_lhs_eclass), (add_enode_raw, sub_lhs_raw)))
+                    &add_nodes_by_lhs_alt,
+                    |_add_lhs_raw, &(sub_lhs_raw, sub_eclass), &(add_enode, ref add)| {
+                        iter::once(((add.rhs(), sub_eclass), (sub_lhs_raw, add_enode)))
                     },
-                ) // 4
+                )
                 .join_core(
-                    &d_eclass_lookup_raw_canon_by_self,
-                    |(_sub_rhs_raw, _add_lhs_eclass), &(add_enode_raw, sub_lhs_raw), _| {
-                        iter::once((add_enode_raw.as_eclass(), sub_lhs_raw))
+                    &eclass_lookup_raw_canon_by_self_alt,
+                    |(_add_rhs_raw, _add_rhs_eclass), &(sub_lhs_raw, add_enode), &()| {
+                        iter::once((add_enode.as_eclass(), sub_lhs_raw))
                     },
-                ); // 6
+                );
+
+            // As I have surprisingly little faith, I'll have the solution if you need it. But try on your own, please.
+            // d_eclass_lookup_by_raw for 6, sub_nodes_by_rhs_alt for 4, eclass_lookup_by_raw_alt for 5.
+            // The sequence is 645312.
+            // 645312
+            let changes_6 = d_eclass_lookup_by_raw
+                .join_core(
+                    &sub_nodes_by_rhs_alt,
+                    |_sub_rhs_raw, &sub_rhs_eclass, &(sub_enode, ref sub)| {
+                        iter::once((sub_enode, (sub_rhs_eclass, sub.lhs())))
+                    },
+                )
+                .join_core(
+                    &eclass_lookup_by_raw_alt,
+                    |_sub_enode, &(sub_rhs_eclass, sub_lhs), &sub_eclass| {
+                        iter::once((sub_eclass, (sub_rhs_eclass, sub_lhs)))
+                    },
+                )
+                .join_core(
+                    &eclass_lookup_by_canon_alt,
+                    |_sub_eclass, &(sub_rhs_eclass, sub_lhs), &add_rhs_raw| {
+                        iter::once(((add_rhs_raw, sub_rhs_eclass), sub_lhs))
+                    },
+                )
+                .join_core(
+                    &eclass_lookup_raw_canon_by_self_alt,
+                    |&(add_rhs_raw, _sub_rhs_eclass), &sub_lhs, &()| {
+                        iter::once((add_rhs_raw, sub_lhs))
+                    },
+                )
+                .join_core(
+                    &add_nodes_by_rhs_alt,
+                    |_add_rhs, &sub_lhs, &(add_enode, ref _add)| {
+                        iter::once((add_enode.as_eclass(), sub_lhs))
+                    },
+                );
 
             concatenate(
                 delta,
