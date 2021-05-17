@@ -1,5 +1,5 @@
 use crate::dataflow::{
-    operators::{FilterMap, FilterSplit, InspectExt, Reverse, Split},
+    operators::{FilterDiff, FilterMap, FilterSplit, InspectExt, Reverse},
     Time,
 };
 use abomonation_derive::Abomonation;
@@ -11,7 +11,7 @@ use differential_dataflow::{
     operators::{
         arrange::{ArrangeByKey, ArrangeBySelf, Arranged, TraceAgent},
         iterate::SemigroupVariable,
-        Consolidate, Join, JoinCore, Reduce, Threshold,
+        Join, JoinCore, Reduce, Threshold,
     },
     trace::implementations::ord::{OrdKeySpine, OrdValSpine},
     Collection, ExchangeData,
@@ -268,16 +268,18 @@ where
     }
 }
 
-fn union<S, R>(
-    scope: &mut S,
-    enodes: &ENodeCollection<S, R>,
-    raw_eclass_mergers: &EClassMerger<S, R>,
-) -> (
+type UnionReturn<S, R> = (
     ENodeEClassLookup<S, R>,
     EClassENodeLookup<S, R>,
     ENodeLookup<S, R>,
     ENodeIds<S, R>,
-)
+);
+
+fn union<S, R>(
+    scope: &mut S,
+    enodes: &ENodeCollection<S, R>,
+    raw_eclass_mergers: &EClassMerger<S, R>,
+) -> UnionReturn<S, R>
 where
     S: Scope,
     S::Timestamp: Lattice,
@@ -468,7 +470,7 @@ where
         scope: &mut S,
         enodes: &ENodeCollection<S, R>,
         eclass_lookup: &ENodeEClassLookup<S, R>,
-        eclass_lookup_reverse: &EClassENodeLookup<S, R>,
+        _eclass_lookup_reverse: &EClassENodeLookup<S, R>,
     ) -> EClassMerger<S, R> {
         // Canonicalizing EClassMergerRaw is optional and
         // can only be done done as an "as-of" delta-join.
@@ -487,7 +489,6 @@ where
         let add_nodes =
             enodes.filter_map(|(enode_id, enode)| enode.as_add().map(|add| (enode_id, add)));
 
-        let add_nodes_by_id = add_nodes.arrange_by_key();
         let add_nodes_by_lhs = add_nodes
             .map(|(enode_id, add)| (add.lhs(), (enode_id, add)))
             .arrange_by_key();
@@ -499,9 +500,6 @@ where
             .filter_map(|(enode_id, enode)| enode.as_sub().map(|sub| (enode_id.as_eclass(), sub)));
 
         let sub_nodes_by_id = sub_nodes.arrange_by_key();
-        let sub_nodes_by_lhs = sub_nodes
-            .map(|(enode_id, sub)| (sub.lhs(), (enode_id, sub)))
-            .arrange_by_key();
         let sub_nodes_by_rhs = sub_nodes
             .map(|(enode_id, sub)| (sub.rhs(), (enode_id, sub)))
             .arrange_by_key();
@@ -520,38 +518,20 @@ where
         scope.scoped("RedundantAddSubChain DeltaQuery", |delta| {
             let d_add_nodes_by_lhs = add_nodes_by_lhs
                 .as_collection(|&lhs, add| (lhs, add.clone()))
+                .filter_diff(|diff| diff >= &R::zero())
                 .differentiate(delta);
 
             let d_eclass_lookup_by_raw = eclass_lookup_by_raw
                 .as_collection(|&enode, &eclass| (enode, eclass))
-                .differentiate(delta)
-                .arrange_by_key();
-
-            let d_eclass_lookup_by_canon = eclass_lookup_by_canon
-                .as_collection(|&eclass, &enode| (eclass, enode))
+                .filter_diff(|diff| diff >= &R::zero())
                 .differentiate(delta)
                 .arrange_by_key();
 
             let d_sub_nodes_by_id = sub_nodes_by_id
                 .as_collection(|&enode, sub| (enode, sub.clone()))
+                .filter_diff(|diff| diff >= &R::zero())
                 .differentiate(delta)
                 .arrange_by_key();
-
-            let d_eclass_lookup_raw_canon_by_self = eclass_lookup_raw_canon_by_self
-                .as_collection(|&by_self, &()| (by_self, ()))
-                .differentiate(delta)
-                .arrange_by_key();
-
-            let d_sub_nodes_by_lhs = sub_nodes_by_lhs
-                .as_collection(|&lhs, &(eclass, ref sub)| (lhs, (eclass, sub.clone())))
-                .differentiate(delta)
-                .arrange_by_key();
-
-            let add_nodes_by_id_alt = add_nodes_by_id.enter_at(
-                delta,
-                |_, _, time| AltNeu::alt(time.clone()),
-                |_time| Timestamp::minimum(),
-            );
 
             let add_nodes_by_lhs_alt = add_nodes_by_lhs.enter_at(
                 delta,
@@ -887,6 +867,31 @@ mod tests {
             enodes.insert((ENodeId::new(3), ENode::Constant));
 
             enodes.advance_to(1);
+
+            enodes.insert((
+                ENodeId::new(6),
+                ENode::Sub(Sub::new(EClassId::new(4), EClassId::new(2))),
+            ));
+            enodes.insert((ENodeId::new(4), ENode::Constant));
+
+            enodes.advance_to(3);
+
+            enodes.insert((
+                ENodeId::new(7),
+                ENode::Add(Add::new(EClassId::new(8), EClassId::new(1))),
+            ));
+            enodes.insert((ENodeId::new(8), ENode::Constant));
+
+            enodes.advance_to(4);
+
+            enodes.insert((
+                ENodeId::new(10),
+                ENode::Add(Add::new(EClassId::new(2), EClassId::new(11))),
+            ));
+            enodes.insert((ENodeId::new(11), ENode::Constant));
+
+            enodes.advance_to(5);
+
             enodes.flush();
 
             worker.step_while(|| probe.less_than(enodes.time()));
