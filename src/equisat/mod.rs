@@ -784,9 +784,6 @@ where
                     },
                 );
 
-            // As I have surprisingly little faith, I'll have the solution if you need it. But try on your own, please.
-            // d_eclass_lookup_by_raw for 6, sub_nodes_by_rhs_alt for 4, eclass_lookup_by_raw_alt for 5.
-            // The sequence is 645312.
             // 645312
             let changes_6 = d_eclass_lookup_by_raw
                 .join_core(
