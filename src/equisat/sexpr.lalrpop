@@ -1,0 +1,19 @@
+use crate::equisat::sexpr::{Rewrite, Term};
+
+grammar;
+
+pub Rewrite: Rewrite = <left: Term> "=>" <right: Term>
+    => Rewrite::new(left, right);
+
+Term: Term = {
+    Var => Term::Var(<>),
+    Ident => Term::Ident(<>),
+    Int => Term::Int(<>),
+    Bool => Term::Bool(<>),
+    "(" <Term*> ")" => Term::List(<>),
+};
+
+Var: String = r"\?[a-zA-Z][a-zA-Z0-9]*" => <>.to_owned();
+Ident: String = r"[a-zA-Z][a-zA-Z0-9]*" => <>.to_owned();
+Int: i64 = r"[0-9]+" => <>.parse().unwrap();
+Bool: bool = { "true" => true, "false" => false };
