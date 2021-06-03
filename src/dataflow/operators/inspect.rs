@@ -1,6 +1,5 @@
-use std::{fmt::Debug, panic::Location};
-
 use differential_dataflow::{difference::Semigroup, Collection, Data};
+use std::{fmt::Debug, panic::Location};
 use timely::dataflow::{operators::Inspect, Scope, Stream};
 
 pub trait InspectExt {

@@ -836,7 +836,7 @@ where
 mod tests {
     use crate::{
         dataflow::{
-            operators::{FilterMap, InspectExt, Keys, Reverse},
+            operators::{FilterMap, Flatten, InspectExt, Keys, Reverse, Split},
             Diff,
         },
         equisat::{Add, EClassId, EGraph, ENode, ENodeId, RedundantAddSubChain, Sub},
@@ -847,6 +847,7 @@ mod tests {
             arrange::ArrangeByKey, iterate::Variable, Consolidate, Join, JoinCore, Reduce,
             Threshold,
         },
+        Collection,
     };
     use std::iter;
     use timely::{
@@ -873,123 +874,148 @@ mod tests {
                         .add_rewrite(RedundantAddSubChain);
 
                     let (nodes_col, edges_col) = graph.feedback();
+                    let nodes_col = enodes.antijoin(&nodes_col.keys()).concat(&nodes_col);
 
                     let edges = edges_col.map(|(node, class)| (node, class.as_enode()));
-                    let initial_costs = nodes_col.map(|(node_id, node)| {
-                        let cost = if node.is_constant() {
-                            Some(0)
-                        } else if node.is_param() {
-                            Some(1)
-                        } else {
-                            None
-                        };
+                    let initial_costs = nodes_col
+                        .map(|(node_id, node)| {
+                            let cost = if node.is_constant() {
+                                Some(0)
+                            } else if node.is_param() {
+                                Some(1)
+                            } else {
+                                None
+                            };
 
-                        (node_id, cost)
-                    });
-
-                    let edges_reverse = edges.reverse().arrange_by_key();
-                    let (nodes, edges) = (
-                        enodes
-                            .antijoin(&nodes_col.keys())
-                            .concat(&nodes_col)
-                            .arrange_by_key(),
-                        edges.arrange_by_key(),
-                    );
-
-                    let best = scope
-                        .iterative::<usize, _, _>(|scope| {
-                            let node_costs = Variable::new_from(
-                                initial_costs.enter(scope),
-                                Product::new(Timestamp::minimum(), 1),
-                            );
-
-                            let (nodes, edges, edges_reverse) = (
-                                nodes.enter(scope),
-                                edges.enter(scope),
-                                edges_reverse.enter(scope),
-                            );
-
-                            let inputs = nodes
-                                .antijoin(&node_costs.keys().debug())
-                                .debug()
-                                .join_core(&edges, |&node_id, node, &src_id| {
-                                    iter::once((src_id, (node_id, node.clone())))
-                                })
-                                .debug()
-                                .join_map(&node_costs, |&src_id, &(node_id, ref node), &cost| {
-                                    ((node_id, node.clone()), (src_id, cost))
-                                })
-                                .debug()
-                                .arrange_by_key();
-
-                            let evaluated = inputs
-                                .reduce(|&(_node_id, ref node), inputs, output| {
-                                    if inputs.iter().all(|((_src_id, cost), _diff)| cost.is_some())
-                                    {
-                                        let costs = inputs
-                                            .iter()
-                                            .map(|&(&(src_id, cost), _)| (src_id, cost.unwrap()));
-
-                                        match node {
-                                            ENode::Add(add) => {
-                                                let (_, lhs) = costs
-                                                    .clone()
-                                                    .filter(|&(src_id, _)| {
-                                                        src_id == add.lhs().as_enode()
-                                                    })
-                                                    .min_by_key(|&(_, cost)| cost)
-                                                    .unwrap();
-                                                let (_, rhs) = costs
-                                                    .filter(|&(src_id, _)| {
-                                                        src_id == add.rhs().as_enode()
-                                                    })
-                                                    .min_by_key(|&(_, cost)| cost)
-                                                    .unwrap();
-
-                                                output.push((Some(1 + lhs + rhs), 1));
-                                            }
-
-                                            ENode::Sub(sub) => {
-                                                let (_, lhs) = costs
-                                                    .clone()
-                                                    .filter(|&(src_id, _)| {
-                                                        src_id == sub.lhs().as_enode()
-                                                    })
-                                                    .min_by_key(|&(_, cost)| cost)
-                                                    .unwrap();
-                                                let (_, rhs) = costs
-                                                    .filter(|&(src_id, _)| {
-                                                        src_id == sub.rhs().as_enode()
-                                                    })
-                                                    .min_by_key(|&(_, cost)| cost)
-                                                    .unwrap();
-
-                                                output.push((Some(1 + lhs + rhs), 1));
-                                            }
-
-                                            ENode::Constant => output.push((Some(0), 1)),
-                                            ENode::Param => output.push((Some(1), 1)),
-                                        }
-                                    }
-                                })
-                                .debug()
-                                .map(|((node_id, _), cost)| (node_id, cost))
-                                .debug();
-
-                            let costs = node_costs
-                                .antijoin(&evaluated.keys())
-                                .debug()
-                                .concat(&evaluated)
-                                .distinct()
-                                .debug();
-
-                            node_costs
-                                .set(&costs)
-                                .debug()
-                                .filter_map(|(node_id, cost)| cost.map(|cost| (node_id, cost)))
-                                .leave()
+                            (node_id, cost)
                         })
                         .debug();
+
+                    let edges_reverse = edges.reverse().arrange_by_key();
+                    let (nodes, edges) = (nodes_col.arrange_by_key(), edges.arrange_by_key());
+
+                    let (nodes, edges) = scope.iterative::<usize, _, _>(|scope| {
+                        let node_costs = Variable::new_from(
+                            initial_costs.enter(scope),
+                            Product::new(Timestamp::minimum(), 1),
+                        );
+                        let retained_edges =
+                            Variable::new(scope, Product::new(Timestamp::minimum(), 1));
+
+                        let (nodes, _edges, edges_reverse) = (
+                            nodes.enter(scope),
+                            edges.enter(scope),
+                            edges_reverse.enter(scope),
+                        );
+
+                        let inputs = nodes
+                            .join_core(&edges_reverse, |&node_id, node, &src_id| {
+                                iter::once((src_id, (node_id, node.clone())))
+                            })
+                            .debug()
+                            .join_map(&node_costs, |&src_id, &(node_id, ref node), &cost| {
+                                ((node_id, node.clone()), (src_id, cost))
+                            })
+                            .debug()
+                            .arrange_by_key();
+
+                        let (evaluated, new_retained_edges) = inputs
+                            .reduce(|&(node_id, ref node), inputs, output| {
+                                dbg!(node_id, node, inputs);
+
+                                if inputs
+                                    .iter()
+                                    .all(|(&(src_id, cost), _)| cost.is_some() || src_id == node_id)
+                                {
+                                    let costs = inputs
+                                        .iter()
+                                        .map(|&(&(src_id, cost), _)| (src_id, cost.unwrap()));
+
+                                    match node {
+                                        ENode::Add(add) => {
+                                            let (lhs_id, lhs) = costs
+                                                .clone()
+                                                .filter(|&(src_id, _)| {
+                                                    src_id == add.lhs().as_enode()
+                                                })
+                                                .min_by_key(|&(_, cost)| cost)
+                                                .unwrap();
+                                            let (rhs_id, rhs) = costs
+                                                .filter(|&(src_id, _)| {
+                                                    src_id == add.rhs().as_enode()
+                                                })
+                                                .min_by_key(|&(_, cost)| cost)
+                                                .unwrap();
+
+                                            output.push((
+                                                (
+                                                    Some(1 + lhs + rhs),
+                                                    vec![(node_id, lhs_id), (node_id, rhs_id)],
+                                                ),
+                                                1,
+                                            ));
+                                        }
+
+                                        ENode::Sub(sub) => {
+                                            let (lhs_id, lhs) = costs
+                                                .clone()
+                                                .filter(|&(src_id, _)| {
+                                                    src_id == sub.lhs().as_enode()
+                                                })
+                                                .min_by_key(|&(_, cost)| cost)
+                                                .unwrap();
+                                            let (rhs_id, rhs) = costs
+                                                .filter(|&(src_id, _)| {
+                                                    src_id == sub.rhs().as_enode()
+                                                })
+                                                .min_by_key(|&(_, cost)| cost)
+                                                .unwrap();
+
+                                            output.push((
+                                                (
+                                                    Some(1 + lhs + rhs),
+                                                    vec![(node_id, lhs_id), (node_id, rhs_id)],
+                                                ),
+                                                1,
+                                            ));
+                                        }
+
+                                        ENode::Constant => {
+                                            output.push(((Some(0), Vec::new()), 1));
+                                        }
+                                        ENode::Param => output.push(((Some(1), Vec::new()), 1)),
+                                    }
+                                }
+                            })
+                            .debug()
+                            .split(|((node_id, _), (cost, edges))| ((node_id, cost), edges));
+
+                        let new_retained_edges: Collection<_, (ENodeId, ENodeId), _> =
+                            new_retained_edges.flatten().debug();
+                        let evaluated = evaluated.debug();
+
+                        let costs = node_costs
+                            .antijoin(&evaluated.keys())
+                            .debug()
+                            .concat(&evaluated)
+                            .distinct()
+                            .debug();
+
+                        let node_costs = node_costs
+                            .set(&costs)
+                            .filter_map(|(node_id, cost)| cost.map(|cost| (node_id, cost)))
+                            .consolidate()
+                            .debug();
+                        let retained_edges = retained_edges
+                            .set_concat(&new_retained_edges)
+                            .consolidate()
+                            .debug();
+
+                        (node_costs.leave(), retained_edges.leave())
+                    });
+
+                    nodes.debug();
+                    edges.debug();
 
                     (nodes_col.leave(), edges_col.leave())
                 });
