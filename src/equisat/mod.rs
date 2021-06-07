@@ -56,14 +56,14 @@ impl ENodeId {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
-pub enum ENode {
-    Add(Add),
-    Sub(Sub),
+pub enum ENode<Id = EClassId> {
+    Add(Add<Id>),
+    Sub(Sub<Id>),
     Constant,
     Param,
 }
 
-impl ENode {
+impl<Id> ENode<Id> {
     /// Returns `true` if the enode is [`Add`].
     pub const fn is_add(&self) -> bool {
         matches!(self, Self::Add(..))
@@ -84,7 +84,10 @@ impl ENode {
         matches!(self, Self::Param)
     }
 
-    pub fn as_add(&self) -> Option<Add> {
+    pub fn as_add(&self) -> Option<Add<Id>>
+    where
+        Id: Clone,
+    {
         if let Self::Add(add) = self {
             Some(add.clone())
         } else {
@@ -92,7 +95,10 @@ impl ENode {
         }
     }
 
-    pub fn as_sub(&self) -> Option<Sub> {
+    pub fn as_sub(&self) -> Option<Sub<Id>>
+    where
+        Id: Clone,
+    {
         if let Self::Sub(sub) = self {
             Some(sub.clone())
         } else {
@@ -102,45 +108,57 @@ impl ENode {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
-pub struct Add {
-    lhs: EClassId,
-    rhs: EClassId,
+pub struct Add<Id> {
+    lhs: Id,
+    rhs: Id,
 }
 
-impl Add {
-    pub const fn new(lhs: EClassId, rhs: EClassId) -> Self {
+impl<Id> Add<Id> {
+    pub const fn new(lhs: Id, rhs: Id) -> Self {
         Self { lhs, rhs }
     }
 
     /// Get the [`Add`]'s left hand side
-    pub const fn lhs(&self) -> EClassId {
+    pub fn lhs(&self) -> Id
+    where
+        Id: Copy,
+    {
         self.lhs
     }
 
     /// Get the [`Add`]'s right hand side
-    pub const fn rhs(&self) -> EClassId {
+    pub fn rhs(&self) -> Id
+    where
+        Id: Copy,
+    {
         self.rhs
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
-pub struct Sub {
-    lhs: EClassId,
-    rhs: EClassId,
+pub struct Sub<Id> {
+    lhs: Id,
+    rhs: Id,
 }
 
-impl Sub {
-    pub const fn new(lhs: EClassId, rhs: EClassId) -> Self {
+impl<Id> Sub<Id> {
+    pub const fn new(lhs: Id, rhs: Id) -> Self {
         Self { lhs, rhs }
     }
 
     /// Get the [`Sub`]'s left hand side
-    pub const fn lhs(&self) -> EClassId {
+    pub fn lhs(&self) -> Id
+    where
+        Id: Copy,
+    {
         self.lhs
     }
 
     /// Get the [`Sub`]'s right hand side
-    pub const fn rhs(&self) -> EClassId {
+    pub fn rhs(&self) -> Id
+    where
+        Id: Copy,
+    {
         self.rhs
     }
 }
@@ -269,8 +287,7 @@ where
         self.enodes_feedback
             .set(&concatenate(&mut scope, self.enodes.into_iter()));
         self.eclass_mergers_feedback
-            .set(&concatenate(&mut scope, self.eclass_mergers.into_iter()))
-            .debug();
+            .set(&concatenate(&mut scope, self.eclass_mergers.into_iter()));
 
         let canon_enodes = self
             .canon_enodes
@@ -836,18 +853,18 @@ where
 mod tests {
     use crate::{
         dataflow::{
-            operators::{FilterMap, Flatten, InspectExt, Keys, Reverse, Split},
+            operators::{AggregatedDebug, FilterMap, Flatten, InspectExt, Keys, Reverse, Split},
             Diff,
         },
         equisat::{Add, EClassId, EGraph, ENode, ENodeId, RedundantAddSubChain, Sub},
     };
+    use abomonation_derive::Abomonation;
     use differential_dataflow::{
         input::Input,
         operators::{
             arrange::ArrangeByKey, iterate::Variable, Consolidate, Join, JoinCore, Reduce,
             Threshold,
         },
-        Collection,
     };
     use std::iter;
     use timely::{
@@ -855,6 +872,12 @@ mod tests {
         order::Product,
         progress::Timestamp,
     };
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
+    enum Side {
+        Left,
+        Right,
+    }
 
     #[test]
     fn union_find() {
@@ -864,20 +887,83 @@ mod tests {
             let mut enodes = worker.dataflow::<usize, _, _>(|scope| {
                 let (enode_input, enodes) = scope.new_collection();
 
+                enodes.inspect_aggregate(|time, data| {
+                    data.iter().for_each(|((enode_id, eclass_id), diff)| {
+                        println!(
+                            "Input ENode: {:?} = {:?} @ {:?} {:+}",
+                            enode_id, eclass_id, time, diff,
+                        );
+                    });
+                });
+
                 let (nodes, edges) = scope.iterative::<usize, _, _>(|scope| {
                     let enodes = enodes.enter(scope);
 
+                    let output_enodes = Variable::new(scope, Product::new(Timestamp::minimum(), 1));
                     let mut graph =
                         EGraph::<_, Diff>::new(scope, Product::new(Timestamp::minimum(), 1));
                     graph
                         .add_enodes(enodes.clone())
                         .add_rewrite(RedundantAddSubChain);
 
-                    let (nodes_col, edges_col) = graph.feedback();
-                    let nodes_col = enodes.antijoin(&nodes_col.keys()).concat(&nodes_col);
+                    let (canon_enodes, eclass_lookup) = graph.feedback();
+                    let eclass_lookup_reverse = eclass_lookup.reverse().arrange_by_key();
 
-                    let edges = edges_col.map(|(node, class)| (node, class.as_enode()));
-                    let initial_costs = nodes_col
+                    canon_enodes.inspect_aggregate(|time, data| {
+                        data.iter().for_each(|((enode_id, enode), diff)| {
+                            println!(
+                                "Canon ENode: {:?} = {:?} @ {:?} {:+}",
+                                enode_id, enode, time, diff,
+                            );
+                        });
+                    });
+                    eclass_lookup.inspect_aggregate(|time, data| {
+                        data.iter().for_each(|((enode_id, eclass_id), diff)| {
+                            println!(
+                                "ENode Lookup: {:?} -> {:?} @ {:?} {:+}",
+                                enode_id, eclass_id, time, diff,
+                            );
+                        });
+                    });
+
+                    // A collection of `(enode_id, enode)`
+                    let all_enodes = enodes
+                        .antijoin(&canon_enodes.keys())
+                        .concat(&canon_enodes)
+                        .inspect_aggregate(|time, data| {
+                            println!("{:?} {{", time);
+                            data.iter().for_each(|((enode_id, enode), diff)| {
+                                println!(
+                                    "    Initial ENode: {:?} = {:?}, {:+}",
+                                    enode_id, enode, diff,
+                                );
+                            });
+                            println!("}}");
+                        });
+                    let enodes_arranged = all_enodes.arrange_by_key();
+
+                    // A collection of `(dest_id, src_class)`, an edge from the user of a resource
+                    // to the node that supplies it
+                    let edges = all_enodes
+                        .flat_map(|(id, enode)| match enode {
+                            ENode::Add(Add { lhs, rhs }) | ENode::Sub(Sub { lhs, rhs }) => {
+                                vec![(id, lhs), (id, rhs)]
+                            }
+                            ENode::Constant | ENode::Param => Vec::new(),
+                        })
+                        .inspect_aggregate(|time, data| {
+                            println!("{:?} {{", time);
+                            data.iter().for_each(|((dest_id, src_eclass), diff)| {
+                                println!(
+                                    "    Initial Edge: {:?} = {:?}, {:+}",
+                                    dest_id, src_eclass, diff,
+                                );
+                            });
+                            println!("}}");
+                        });
+                    let edges_forward = edges.arrange_by_key();
+
+                    let initial_costs = all_enodes
                         .map(|(node_id, node)| {
                             let cost = if node.is_constant() {
                                 Some(0)
@@ -889,62 +975,91 @@ mod tests {
 
                             (node_id, cost)
                         })
-                        .debug();
+                        .inspect_aggregate(|time, data| {
+                            println!("{:?} {{", time);
+                            data.iter().for_each(|((enode_id, enode_cost), diff)| {
+                                println!(
+                                    "    Initial ENode Cost: {:?} = {:?} @ {:?} {:+}",
+                                    enode_id, enode_cost, time, diff,
+                                );
+                            });
+                            println!("}}");
+                        });
 
-                    let edges_reverse = edges.reverse().arrange_by_key();
-                    let (nodes, edges) = (nodes_col.arrange_by_key(), edges.arrange_by_key());
+                    let edges = scope.iterative::<usize, _, _>(|scope| {
+                        let (enodes_arranged, edges_forward, eclass_lookup_reverse) = (
+                            enodes_arranged.enter(scope),
+                            edges_forward.enter(scope),
+                            eclass_lookup_reverse.enter(scope),
+                        );
 
-                    let (nodes, edges) = scope.iterative::<usize, _, _>(|scope| {
-                        let node_costs = Variable::new_from(
+                        let enode_costs = Variable::new_from(
                             initial_costs.enter(scope),
                             Product::new(Timestamp::minimum(), 1),
                         );
                         let retained_edges =
                             Variable::new(scope, Product::new(Timestamp::minimum(), 1));
 
-                        let (nodes, _edges, edges_reverse) = (
-                            nodes.enter(scope),
-                            edges.enter(scope),
-                            edges_reverse.enter(scope),
-                        );
-
-                        let inputs = nodes
-                            .join_core(&edges_reverse, |&node_id, node, &src_id| {
+                        // Join enodes onto their data sources, giving us `(src_eclass_id, (enode_id, enode))`
+                        let enode_dependencies = enodes_arranged
+                            .join_core(&edges_forward, |&node_id, node, &src_id| {
                                 iter::once((src_id, (node_id, node.clone())))
                             })
-                            .debug()
-                            .join_map(&node_costs, |&src_id, &(node_id, ref node), &cost| {
-                                ((node_id, node.clone()), (src_id, cost))
-                            })
-                            .debug()
-                            .arrange_by_key();
+                            .debug_inspect(|((enode_id, eclass_id), time, diff)| {
+                                println!(
+                                    "ENode Dependencies: {:?} -> {:?} @ {:?} {:+}",
+                                    enode_id, eclass_id, time, diff,
+                                );
+                            });
 
-                        let (evaluated, new_retained_edges) = inputs
-                            .reduce(|&(node_id, ref node), inputs, output| {
-                                dbg!(node_id, node, inputs);
+                        // Collect all enode ids for dependency eclasses, giving us `(src_enode_id, (enode_id, enode, src_eclass))`
+                        let dependencies_exploded = enode_dependencies.join_core(
+                            &eclass_lookup_reverse,
+                            |&src_eclass, &(node_id, ref node), &src_enode| {
+                                iter::once((src_enode, (node_id, node.clone(), src_eclass)))
+                            },
+                        );
 
-                                if inputs
-                                    .iter()
-                                    .all(|(&(src_id, cost), _)| cost.is_some() || src_id == node_id)
-                                {
-                                    let costs = inputs
-                                        .iter()
-                                        .map(|&(&(src_id, cost), _)| (src_id, cost.unwrap()));
+                        // Find the costs of all dependency enodes, giving us `((enode_id, enode), (src_enode_id, src_cost, src_eclass))`
+                        let dependency_costs = dependencies_exploded.join_map(
+                            &enode_costs,
+                            |&src_enode, &(node_id, ref node, src_eclass), &src_cost| {
+                                ((node_id, node.clone()), (src_enode, src_cost, src_eclass))
+                            },
+                        );
+
+                        let (evaluated, new_retained_edges) = dependency_costs
+                            .reduce(|&(node_id, ref node), dependencies, output| {
+                                // dbg!(node_id, node, dependencies);
+
+                                // Unless we know the cost of *every* dependency, don't
+                                // calculate this enode's cost.
+                                // TODO: Is this better off as "eventually consistent"?
+                                //       Should it rely on recursion to find the true
+                                //       cost of each node to allow getting partial
+                                //       results (that could be totally correct and cause
+                                //       no churn) as soon as possible and stop holding
+                                //       back other enode's calculation or is the churn
+                                //       more trouble than it's worth? On average nodes
+                                //       really shouldn't have that many possible inputs,
+                                //       so eagerly evaluating them could be a big bonus
+                                if dependencies.iter().all(|(&(_, cost, _), _)| cost.is_some()) {
+                                    let costs = dependencies.iter().map(
+                                        |&(&(src_id, cost, src_eclass), _)| {
+                                            (src_id, cost.unwrap(), src_eclass)
+                                        },
+                                    );
 
                                     match node {
                                         ENode::Add(add) => {
-                                            let (lhs_id, lhs) = costs
+                                            let (lhs_id, lhs, _lhs_eclass) = costs
                                                 .clone()
-                                                .filter(|&(src_id, _)| {
-                                                    src_id == add.lhs().as_enode()
-                                                })
-                                                .min_by_key(|&(_, cost)| cost)
+                                                .filter(|&(_, _, eclass)| eclass == add.lhs())
+                                                .min_by_key(|&(_, cost, _)| cost)
                                                 .unwrap();
-                                            let (rhs_id, rhs) = costs
-                                                .filter(|&(src_id, _)| {
-                                                    src_id == add.rhs().as_enode()
-                                                })
-                                                .min_by_key(|&(_, cost)| cost)
+                                            let (rhs_id, rhs, _rhs_eclass) = costs
+                                                .filter(|&(_, _, eclass)| eclass == add.lhs())
+                                                .min_by_key(|&(_, cost, _)| cost)
                                                 .unwrap();
 
                                             output.push((
@@ -957,18 +1072,14 @@ mod tests {
                                         }
 
                                         ENode::Sub(sub) => {
-                                            let (lhs_id, lhs) = costs
+                                            let (lhs_id, lhs, _lhs_eclass) = costs
                                                 .clone()
-                                                .filter(|&(src_id, _)| {
-                                                    src_id == sub.lhs().as_enode()
-                                                })
-                                                .min_by_key(|&(_, cost)| cost)
+                                                .filter(|&(_, _, eclass)| eclass == sub.lhs())
+                                                .min_by_key(|&(_, cost, _)| cost)
                                                 .unwrap();
-                                            let (rhs_id, rhs) = costs
-                                                .filter(|&(src_id, _)| {
-                                                    src_id == sub.rhs().as_enode()
-                                                })
-                                                .min_by_key(|&(_, cost)| cost)
+                                            let (rhs_id, rhs, _rhs_eclass) = costs
+                                                .filter(|&(_, _, eclass)| eclass == sub.lhs())
+                                                .min_by_key(|&(_, cost, _)| cost)
                                                 .unwrap();
 
                                             output.push((
@@ -987,47 +1098,140 @@ mod tests {
                                     }
                                 }
                             })
-                            .debug()
                             .split(|((node_id, _), (cost, edges))| ((node_id, cost), edges));
 
-                        let new_retained_edges: Collection<_, (ENodeId, ENodeId), _> =
-                            new_retained_edges.flatten().debug();
-                        let evaluated = evaluated.debug();
+                        let new_retained_edges = new_retained_edges.flatten().consolidate();
+                        retained_edges.set_concat(&new_retained_edges);
 
-                        let costs = node_costs
+                        let costs = enode_costs
                             .antijoin(&evaluated.keys())
-                            .debug()
                             .concat(&evaluated)
-                            .distinct()
-                            .debug();
+                            .distinct();
+                        enode_costs.set(&costs);
 
-                        let node_costs = node_costs
-                            .set(&costs)
-                            .filter_map(|(node_id, cost)| cost.map(|cost| (node_id, cost)))
-                            .consolidate()
-                            .debug();
-                        let retained_edges = retained_edges
-                            .set_concat(&new_retained_edges)
-                            .consolidate()
-                            .debug();
-
-                        (node_costs.leave(), retained_edges.leave())
+                        new_retained_edges.leave()
                     });
 
-                    nodes.debug();
-                    edges.debug();
+                    // All the enodes that are connected via edges
+                    let used_enodes = enodes
+                        .semijoin(&edges.map(|(id, _)| id))
+                        .concat(&enodes.semijoin(&edges.map(|(_, id)| id)))
+                        .distinct();
 
-                    (nodes_col.leave(), edges_col.leave())
+                    // EClasses that need to be resolved to a canon enode id
+                    let needs_resolution = used_enodes.flat_map(|(id, enode)| match enode {
+                        ENode::Add(Add { lhs, rhs }) | ENode::Sub(Sub { lhs, rhs }) => {
+                            vec![(lhs, (id, Side::Left)), (rhs, (id, Side::Right))]
+                        }
+                        ENode::Constant | ENode::Param => Vec::new(),
+                    });
+
+                    // The canon eclass ids for the remaining enodes
+                    let remaining_lookups = eclass_lookup.semijoin(&used_enodes.keys()).reverse();
+
+                    // The resolved eclasses, now with their canon enode ids
+                    let resolved_eclasses = needs_resolution
+                        .join_map(&remaining_lookups, |_, &(parent_id, side), &resolved| {
+                            (parent_id, (resolved, side))
+                        });
+
+                    let rewritten_enodes = used_enodes
+                        .join_map(&resolved_eclasses, |&enode_id, enode, &(resolved, side)| {
+                            ((enode_id, enode.clone()), (resolved, side))
+                        })
+                        .reduce(|(_enode_id, enode), node_inputs, output| {
+                            let rewritten = match enode {
+                                ENode::Constant => ENode::Constant,
+                                ENode::Param => ENode::Param,
+                                ENode::Add(_) => {
+                                    let lhs = node_inputs
+                                        .iter()
+                                        .find(|&(&(_, side), _)| side == Side::Left)
+                                        .map(|&(&(lhs, _), _)| lhs);
+
+                                    let rhs = node_inputs
+                                        .iter()
+                                        .find(|&(&(_, side), _)| side == Side::Right)
+                                        .map(|&(&(lhs, _), _)| lhs);
+
+                                    if let (Some(lhs), Some(rhs)) = (lhs, rhs) {
+                                        ENode::Add(Add { lhs, rhs })
+                                    } else {
+                                        return;
+                                    }
+                                }
+                                ENode::Sub(_) => {
+                                    let lhs = node_inputs
+                                        .iter()
+                                        .find(|&(&(_, side), _)| side == Side::Left)
+                                        .map(|&(&(lhs, _), _)| lhs);
+
+                                    let rhs = node_inputs
+                                        .iter()
+                                        .find(|&(&(_, side), _)| side == Side::Right)
+                                        .map(|&(&(lhs, _), _)| lhs);
+
+                                    if let (Some(lhs), Some(rhs)) = (lhs, rhs) {
+                                        ENode::Sub(Sub { lhs, rhs })
+                                    } else {
+                                        return;
+                                    }
+                                }
+                            };
+
+                            output.push((rewritten, 1));
+                        })
+                        .map(|((enode_id, _), enode)| (enode_id, enode));
+
+                    // ENodes that have no external dependencies will be skipped
+                    // by the resolution code so we add them back in
+                    let missing_enodes = used_enodes.antijoin(&rewritten_enodes.keys()).filter_map(
+                        |(enode_id, enode)| {
+                            let rewritten = match enode {
+                                ENode::Constant => ENode::Constant,
+                                ENode::Param => ENode::Param,
+                                ENode::Sub(_) | ENode::Add(_) => return None,
+                            };
+
+                            Some((enode_id, rewritten))
+                        },
+                    );
+
+                    // Then we combine the two streams of missing enodes
+                    // and get the final output
+                    let all_rewritten_enodes = rewritten_enodes
+                        .concat(&missing_enodes)
+                        .inspect_aggregate(|time, data| {
+                            println!("{:?} {{", time);
+                            data.iter().for_each(|(data, diff)| {
+                                println!("    Rewritten ENode: {:?}, {:+}", data, diff);
+                            });
+                            println!("}}");
+                        });
+                    output_enodes.set(&all_rewritten_enodes);
+
+                    (all_rewritten_enodes.leave(), edges.consolidate().leave())
                 });
 
                 nodes
-                    .consolidate()
-                    .inspect(|x| println!("Node: {:?}", x))
+                    .inspect_aggregate(|time, data| {
+                        println!("{} {{", time);
+                        data.iter().for_each(|(data, diff)| {
+                            println!("    Final ENode: {:?}, {:+}", data, diff);
+                        });
+                        println!("}}");
+                    })
                     .probe_with(&mut probe);
 
                 edges
                     .consolidate()
-                    .inspect(|x| println!("Edge: {:?}", x))
+                    .inspect_aggregate(|time, data| {
+                        println!("{} {{", time);
+                        data.iter().for_each(|(data, diff)| {
+                            println!("    Final Edge: {:?}, {:+}", data, diff);
+                        });
+                        println!("}}");
+                    })
                     .probe_with(&mut probe);
 
                 enode_input

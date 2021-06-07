@@ -40,7 +40,7 @@ pub use exchange::ExchangeExt;
 pub use filter_diff::FilterDiff;
 pub use filter_map::FilterMap;
 pub use flatten::Flatten;
-pub use inspect::InspectExt;
+pub use inspect::{AggregatedDebug, InspectExt};
 pub use join::SemijoinExt;
 pub use keys::Keys;
 pub use map::MapExt;
